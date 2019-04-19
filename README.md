@@ -11,7 +11,7 @@
 * Extract all PE images from unpacked/decrypted containers on the fly (-e switch):
    * dump VDLLs (Virtual DLLs);
    * dump VFS (Virtual File System) contents;
-   * dump signatures auxilarity images;
+   * dump signatures auxiliary images;
    * code can be adapted to dump type specific chunks of database (not implemented);
 * Faster than any script.
 
