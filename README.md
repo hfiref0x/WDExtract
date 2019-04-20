@@ -26,6 +26,14 @@ wdextract file [-e]
 * file - filename of VDM container (*.vdm file or MRT.exe executable);
 * -e optional parameter, extract all found PE image chunks found in VDM after unpacking/decrypting (this including VFS components and emulator VDLLs).
 
+Example:
++ wdextract c:\wdbase\mpasbase.vdm
++ wdextract c:\wdbase\mpasbase.vdm -e
++ wdextract c:\wdbase\mrt.exe
++ wdextract c:\wdbase\mrt.exe -e
+
+Note: base will be unpacked/decrypted to source directory as %originalname%.extracted (e.g. if original file c:\wdbase\mpasbase.vdm, unpacked will be c:\wdbase\mpasbase.vdm.extracted). Image chunks will be dumped to created "chunks" directory in the wdextract current directory (e.g. if wdextract run from c:\wdbase it will be c:\wdbase\chunks directory). Output files always overwrite existing.
+
 
 # Build
 

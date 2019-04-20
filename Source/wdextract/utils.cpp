@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.01
 *
-*  DATE:        18 Apr 2019
+*  DATE:        19 Apr 2019
 *
 *  Program global support routines, ZLib, containers.
 *
@@ -29,7 +29,7 @@ unsigned char ZLib_out[ZLIB_CHUNK];
 
 #pragma comment(lib, "zlibwapi.lib")
 
-HANDLE FileCreate(LPWSTR lpFileName)
+HANDLE FileCreate(LPCWSTR lpFileName)
 {
     return CreateFile(lpFileName, GENERIC_WRITE | GENERIC_READ, 0, NULL, CREATE_ALWAYS, 0, NULL);
 }
@@ -132,7 +132,6 @@ PBYTE GetContainerFromResource(
     }
 
     return Data;
-
 }
 
 /*
@@ -205,7 +204,7 @@ BOOLEAN ZLibUnpack(
 )
 {
     int ret;
-    unsigned have, got;
+    unsigned have = 0, got = 0;
     z_stream strm;
 
     DWORD totalBytesWritten = 0;
@@ -314,7 +313,7 @@ void ShowWin32Error(
                 LocalSize(lpDisplayBuf) / sizeof(CHAR),
                 "%s failed with error %u: %s",
                 Function, ErrorCode, (LPSTR)lpMsgBuf);
-            printf((LPSTR)lpDisplayBuf);
+            printf_s((LPSTR)lpDisplayBuf);
 
             LocalFree(lpDisplayBuf);
         }
@@ -431,10 +430,8 @@ BOOLEAN IsValidImage(
                 return FALSE;
         }
 
-
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
-
         return FALSE;
     }
     return TRUE;
@@ -531,7 +528,6 @@ BOOLEAN ExtractImageNameFromExport(
                 }
             }
         }
-
 
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {

@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.01
 *
-*  DATE:        18 Apr 2019
+*  DATE:        19 Apr 2019
 *
 *  Common include header file.
 *
@@ -20,8 +20,6 @@
 #if !defined UNICODE
 #error ANSI build is not supported
 #endif
-
-#define _CRT_SECURE_NO_WARNINGS
 
 #include <Windows.h>
 #include <strsafe.h>

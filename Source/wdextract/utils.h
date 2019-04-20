@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.01
 *
-*  DATE:        18 Apr 2019
+*  DATE:        19 Apr 2019
 *
 *  Support routines header file.
 *
@@ -18,7 +18,7 @@
 *******************************************************************************/
 #pragma once
 
-HANDLE FileCreate(LPWSTR lpFileName);
+HANDLE FileCreate(LPCWSTR lpFileName);
 ULONG FileWrite(PBYTE InputBuffer, ULONG Size, HANDLE hFile);
 ULONG FileRead(PBYTE OutputBuffer, ULONG Size, HANDLE hFile);
 #define FileClose(FileHandle) CloseHandle(FileHandle)

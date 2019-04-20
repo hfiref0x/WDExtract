@@ -1,3 +1,22 @@
+/*******************************************************************************
+*
+*  (C) COPYRIGHT AUTHORS, 2019
+*
+*  TITLE:       MPENGINE.H
+*
+*  VERSION:     1.01
+*
+*  DATE:        18 Apr 2019
+*
+*  MpEngine related structures and definitions.
+*
+* THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
+* ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
+* TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
+* PARTICULAR PURPOSE.
+*
+*******************************************************************************/
+
 #pragma once
 
 #define RMDX_MAGIC 'XDMR'
