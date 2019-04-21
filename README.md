@@ -7,7 +7,7 @@
 
 ## Features
 * Unpack VDM containers of Windows Defender/Microsoft Security Essentials;
-* Decrypt VDM container embedded in Malicious Remotal Tool (MRT.exe);
+* Decrypt VDM container embedded in Malicious software Removal Tool (MRT.exe);
 * Extract all PE images from unpacked/decrypted containers on the fly (-e switch):
    * dump VDLLs (Virtual DLLs);
    * dump VFS (Virtual File System) contents;
