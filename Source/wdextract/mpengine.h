@@ -4,9 +4,9 @@
 *
 *  TITLE:       MPENGINE.H
 *
-*  VERSION:     1.01
+*  VERSION:     1.02
 *
-*  DATE:        18 Apr 2019
+*  DATE:        22 Apr 2019
 *
 *  MpEngine related structures and definitions.
 *
@@ -42,6 +42,13 @@ typedef struct _CDATA_HEADER {
         ULONG Unknown2;
     } u1;
 } CDATA_HEADER, *PCDATA_HEADER;
+
+typedef struct _CDATA_HEADER_NIS {
+    ULONG Unknown0;             //0
+    ULONG Unknown1;             //4
+    BYTE Utf8Marker[3];         //8
+    BYTE Data[1];
+} CDATA_HEADER_NIS, *PCDATA_HEADER_NIS;
 
 typedef struct _CHUNK_HEAD {
     BYTE Key;

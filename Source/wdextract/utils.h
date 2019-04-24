@@ -4,9 +4,9 @@
 *
 *  TITLE:       UTILS.H
 *
-*  VERSION:     1.01
+*  VERSION:     1.02
 *
-*  DATE:        19 Apr 2019
+*  DATE:        22 Apr 2019
 *
 *  Support routines header file.
 *
@@ -18,6 +18,7 @@
 *******************************************************************************/
 #pragma once
 
+HANDLE FileOpen(LPCWSTR lpFileName, DWORD dwDesiredAccess);
 HANDLE FileCreate(LPCWSTR lpFileName);
 ULONG FileWrite(PBYTE InputBuffer, ULONG Size, HANDLE hFile);
 ULONG FileRead(PBYTE OutputBuffer, ULONG Size, HANDLE hFile);
@@ -38,6 +39,9 @@ PBYTE GetContainerFromResource(
 BOOLEAN IsValidContainer(
     _In_ PVOID Container,
     _In_ ULONG Size);
+
+BOOLEAN IsContainerNIS(
+    _In_ PVOID Container);
 
 BOOLEAN IsValidImage(
     _In_ PVOID ImageBase);

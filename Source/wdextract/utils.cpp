@@ -4,9 +4,9 @@
 *
 *  TITLE:       UTILS.CPP
 *
-*  VERSION:     1.01
+*  VERSION:     1.02
 *
-*  DATE:        19 Apr 2019
+*  DATE:        21 Apr 2019
 *
 *  Program global support routines, ZLib, containers.
 *
@@ -17,7 +17,6 @@
 *
 *******************************************************************************/
 
-#include "pch.h"
 #include "global.h"
 #include "zlib.h"
 
@@ -28,6 +27,11 @@ unsigned char ZLib_in[ZLIB_CHUNK];
 unsigned char ZLib_out[ZLIB_CHUNK];
 
 #pragma comment(lib, "zlibwapi.lib")
+
+HANDLE FileOpen(LPCWSTR lpFileName, DWORD dwDesiredAccess)
+{
+    return CreateFile(lpFileName, dwDesiredAccess, 0, NULL, OPEN_EXISTING, 0, NULL);
+}
 
 HANDLE FileCreate(LPCWSTR lpFileName)
 {
@@ -176,6 +180,37 @@ BOOLEAN IsValidContainer(
     return TRUE;
 }
 
+/*
+* IsContainerNIS
+*
+* Purpose:
+*
+* Check if this is NIS container, return TRUE on success.
+*
+*/
+BOOLEAN IsContainerNIS(
+    _In_ PVOID Container)
+{
+    CDATA_HEADER_NIS *NisDataHeader;
+
+    __try {
+
+        NisDataHeader = (PCDATA_HEADER_NIS)Container;
+
+        //utf-8
+        if ((NisDataHeader->Utf8Marker[0] == 0xef) &&
+            (NisDataHeader->Utf8Marker[1] == 0xbb) &&
+            (NisDataHeader->Utf8Marker[2] == 0xbf))
+            return TRUE;
+
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return FALSE;
+    }
+
+    return FALSE;
+}
+
 void XorMemoryBuffer(
     _In_ unsigned char *p,
     _In_ unsigned char key,
@@ -313,7 +348,7 @@ void ShowWin32Error(
                 LocalSize(lpDisplayBuf) / sizeof(CHAR),
                 "%s failed with error %u: %s",
                 Function, ErrorCode, (LPSTR)lpMsgBuf);
-            printf_s((LPSTR)lpDisplayBuf);
+            printf_s("%s", (LPSTR)lpDisplayBuf);
 
             LocalFree(lpDisplayBuf);
         }

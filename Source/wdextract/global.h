@@ -4,9 +4,9 @@
 *
 *  TITLE:       GLOBAL.H
 *
-*  VERSION:     1.01
+*  VERSION:     1.02
 *
-*  DATE:        19 Apr 2019
+*  DATE:        22 Apr 2019
 *
 *  Common include header file.
 *
@@ -17,6 +17,8 @@
 *
 *******************************************************************************/
 
+#pragma once
+
 #if !defined UNICODE
 #error ANSI build is not supported
 #endif
@@ -24,10 +26,10 @@
 #include <Windows.h>
 #include <strsafe.h>
 #include <dbghelp.h>
+#include <wincrypt.h>
 #include "mpengine.h"
 #include "utils.h"
 
 #pragma comment(lib, "Dbghelp.lib")
 #pragma comment(lib, "version.lib")
-
-#pragma once
+#pragma comment(lib, "crypt32.lib")

@@ -4,9 +4,9 @@
 *
 *  TITLE:       MAIN.CPP
 *
-*  VERSION:     1.01
+*  VERSION:     1.02
 *
-*  DATE:        19 Apr 2019
+*  DATE:        22 Apr 2019
 *
 *  WDEXTRACT main logic and entrypoint.
 *
@@ -17,10 +17,17 @@
 *
 *******************************************************************************/
 
-#include "pch.h"
 #include "global.h"
 
 #define MAX_FILENAME_BUFFER_LENGTH 1024
+
+#define DEFAULT_CHUNK_NAME          L"module"
+#define DEFAULT_CHUNK_NAME_NIS      L"nis_module"
+
+#define CODEBLOB_OPEN               L"<CodeBlob>"
+#define CODEBLOB_CLOSE              L"</CodeBlob>"
+
+#define WDEXTRACT_VERSION           "wdextract 1.02"
 
 typedef struct _LANGANDCODEPAGE {
     WORD wLanguage;
@@ -39,7 +46,8 @@ ULONG ExtractCallback(
     _In_ LPWSTR CurrentDirectory,
     _In_ PVOID ChunkPtr,
     _In_ ULONG ChunkLength,
-    _In_ ULONG ChunkId)
+    _In_ ULONG ChunkId,
+    _In_ BOOLEAN fNIS)
 {
     BOOLEAN FileNameAvailable;
     ULONG Result = ERROR_SUCCESS;
@@ -48,6 +56,13 @@ ULONG ExtractCallback(
     WCHAR ImageChunkFileName[MAX_FILENAME_BUFFER_LENGTH + 1];
     WCHAR ImageChunkFileName2[MAX_FILENAME_BUFFER_LENGTH + 1];
 
+    LPCWSTR lpDefaultChunkName;
+
+    if (fNIS)
+        lpDefaultChunkName = DEFAULT_CHUNK_NAME_NIS;
+    else
+        lpDefaultChunkName = DEFAULT_CHUNK_NAME;
+
     RtlSecureZeroMemory(szImageName, sizeof(szImageName));
     FileNameAvailable = ExtractImageNameFromExport(ChunkPtr, (LPWSTR)&szImageName, MAX_PATH);
 
@@ -55,7 +70,7 @@ ULONG ExtractCallback(
 
         RtlSecureZeroMemory(ImageChunkFileName, sizeof(ImageChunkFileName));
         StringCchPrintf(ImageChunkFileName, MAX_FILENAME_BUFFER_LENGTH,
-            TEXT("%s\\chunks\\%s_module%u.dll"), CurrentDirectory, szImageName, ChunkId);
+            TEXT("%s\\chunks\\%s_%s%u.dll"), CurrentDirectory, szImageName, lpDefaultChunkName, ChunkId);
 
         FileHandle = FileCreate(ImageChunkFileName);
         if (FileHandle != INVALID_HANDLE_VALUE) {
@@ -78,7 +93,7 @@ ULONG ExtractCallback(
         WCHAR szKey[100 + 1];
 
         StringCchPrintf(ImageChunkFileName, MAX_FILENAME_BUFFER_LENGTH,
-            TEXT("%s\\chunks\\module%u.dll"), CurrentDirectory, ChunkId);
+            TEXT("%s\\chunks\\%s%u.dll"), CurrentDirectory, lpDefaultChunkName, ChunkId);
 
         FileHandle = FileCreate(ImageChunkFileName);
         if (FileHandle != INVALID_HANDLE_VALUE) {
@@ -108,7 +123,7 @@ ULONG ExtractCallback(
 
                             RtlSecureZeroMemory(ImageChunkFileName2, sizeof(ImageChunkFileName2));
                             StringCchPrintf(ImageChunkFileName2, MAX_FILENAME_BUFFER_LENGTH,
-                                TEXT("%s\\chunks\\%s_module%u.dll"), CurrentDirectory, lpOriginalFileName, ChunkId);
+                                TEXT("%s\\chunks\\%s_%s%u.dll"), CurrentDirectory, lpOriginalFileName, lpDefaultChunkName, ChunkId);
                             if (!MoveFileEx(ImageChunkFileName, ImageChunkFileName2,
                                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
                             {
@@ -126,6 +141,91 @@ ULONG ExtractCallback(
     }
 
     return Result;
+}
+
+/*
+* ExtractDataXML_BruteForce
+*
+* Purpose:
+*
+* Extract image chunks from XML scheme.
+*
+*/
+UINT ExtractDataXML_BruteForce(
+    _In_ LPWSTR szCurrentDirectory,
+    _In_ PVOID Container,
+    _In_ LPCWSTR OpenElement,
+    _In_ LPCWSTR CloseElement,
+    _Out_ PULONG ExtractedChunks
+)
+{
+    ULONG ctr = 0;
+    SIZE_T tl1, tl2;
+    CDATA_HEADER_NIS *NisDataHeader = (CDATA_HEADER_NIS*)Container;
+    PWCHAR p = (PWCHAR)&NisDataHeader->Data;
+
+    INT nLength = MultiByteToWideChar(CP_ACP, 0, (CHAR*)p, -1, NULL, 0);
+    if (nLength) {
+        LPWSTR pConverted = (LPWSTR)LocalAlloc(LMEM_ZEROINIT, (1 + (SIZE_T)nLength) * sizeof(WCHAR));
+        if (pConverted) {
+
+            tl1 = wcslen(OpenElement);
+            tl2 = wcslen(CloseElement);
+
+            MultiByteToWideChar(CP_ACP, 0, (CHAR*)p, -1, pConverted, nLength);
+
+            PWCHAR CurrentPosition = pConverted;
+            PWCHAR MaximumPosition = (PWCHAR)(pConverted + wcslen(pConverted)) - tl2;
+
+            while (CurrentPosition < MaximumPosition) {
+
+                WCHAR *OpenBlob = wcsstr(CurrentPosition, OpenElement);
+                if (OpenBlob) {
+
+                    OpenBlob += tl1;
+                    SIZE_T ChunkLength = 0;
+                    WCHAR *ptr = OpenBlob;
+                    while ((*ptr != L'<') && (ptr < MaximumPosition)) {
+                        ChunkLength++;
+                        ptr++;
+                    }
+                    if (ptr) {
+
+                        DWORD cbBinary = 0;
+                        CryptStringToBinary(OpenBlob, (DWORD)ChunkLength,
+                            CRYPT_STRING_BASE64, NULL, (DWORD*)&cbBinary, NULL, NULL);
+
+                        BYTE *pbBinary = (BYTE*)LocalAlloc(LMEM_ZEROINIT, cbBinary);
+                        if (pbBinary) {
+
+                            if (CryptStringToBinary(OpenBlob, (DWORD)ChunkLength,
+                                CRYPT_STRING_BASE64, pbBinary, &cbBinary, NULL, NULL))
+                            {
+                                printf_s("%s: Found image at position %08llX with size = %lu\r\n", __FUNCTION__,
+                                    (ULONG_PTR)OpenBlob,
+                                    (DWORD)ChunkLength);
+
+                                ExtractCallback(szCurrentDirectory, pbBinary, cbBinary, ctr, TRUE);
+                                ++ctr;
+                            }
+                            LocalFree(pbBinary);
+                        }
+
+                    }
+
+                    CurrentPosition = (OpenBlob + ChunkLength);
+                    continue;
+                }
+
+                CurrentPosition++;
+            }
+
+        }
+    }
+
+    *ExtractedChunks = ctr;
+
+    return ERROR_SUCCESS;
 }
 
 /*
@@ -163,6 +263,8 @@ UINT ExtractDataDll(
 
     __try {
 
+        printf_s("%s: Attempt to unpack VDM container\r\n", __FUNCTION__);
+
         RtlSecureZeroMemory(szCurrentDirectory, sizeof(szCurrentDirectory));
         GetCurrentDirectory(MAX_PATH, szCurrentDirectory);
 
@@ -188,7 +290,7 @@ UINT ExtractDataDll(
 
         StringCchLength(FileName, MAX_PATH, &FileNameLength);
         FileNameLength += (1 + MAX_PATH);
-        NewFileName = (LPWSTR)LocalAlloc(LPTR, FileNameLength * sizeof(WCHAR));
+        NewFileName = (LPWSTR)LocalAlloc(LMEM_ZEROINIT, FileNameLength * sizeof(WCHAR));
         if (NewFileName == NULL)
             return GetLastError();
 
@@ -219,42 +321,58 @@ UINT ExtractDataDll(
                     SetFilePointer(OutputFileHandle, 0, NULL, FILE_BEGIN);
                     FileRead(ReadData, totalBytesWritten, OutputFileHandle);
 
-                    ULONG CurrentPosition = 0;
-                    ULONG SizeOfImage;
-                    PBYTE CurrentPtr;
-                    while (CurrentPosition < totalBytesWritten - sizeof(WORD)) {
+                    if (IsContainerNIS(ReadData)) {
 
-                        CurrentPtr = (PBYTE)RtlOffsetToPointer(ReadData, CurrentPosition);
+                        printf_s("%s: Container is NIS\r\n", __FUNCTION__);
 
-                        if ((*(PWORD)(CurrentPtr)) == 'ZM') {
+                        Result = ExtractDataXML_BruteForce(szCurrentDirectory,
+                            ReadData,
+                            CODEBLOB_OPEN,
+                            CODEBLOB_CLOSE,
+                            &ctr);
 
-                            SizeOfImage = 0;
+                    }
+                    else {
 
-                            if (IsValidImage(CurrentPtr) && GetImageSize(CurrentPtr, &SizeOfImage)) {
+                        ULONG CurrentPosition = 0;
+                        ULONG SizeOfImage;
+                        PBYTE CurrentPtr;
+                        while (CurrentPosition < totalBytesWritten - sizeof(WORD)) {
 
-                                if (CurrentPosition + SizeOfImage > totalBytesWritten) {
-                                    break;
+                            CurrentPtr = (PBYTE)RtlOffsetToPointer(ReadData, CurrentPosition);
+
+                            if ((*(PWORD)(CurrentPtr)) == 'ZM') {
+
+                                SizeOfImage = 0;
+
+                                if (IsValidImage(CurrentPtr) && GetImageSize(CurrentPtr, &SizeOfImage)) {
+
+                                    if (CurrentPosition + SizeOfImage > totalBytesWritten) {
+                                        break;
+                                    }
+
+                                    printf_s("%s: Found image at position %08X with size = %lu\r\n", __FUNCTION__,
+                                        CurrentPosition,
+                                        SizeOfImage);
+
+                                    cError = ExtractCallback(szCurrentDirectory, CurrentPtr, SizeOfImage, ctr, NULL);
+
+                                    if (cError != ERROR_SUCCESS) {
+                                        ShowWin32Error(cError, "ExtractCallback()");
+                                    }
+
+                                    ++ctr;
+
+                                    CurrentPosition += SizeOfImage;
+                                    continue;
                                 }
 
-                                printf("Found image at position %08X with size = %lu\r\n", CurrentPosition, SizeOfImage);
-
-                                cError = ExtractCallback(szCurrentDirectory, CurrentPtr, SizeOfImage, ctr);
-
-                                if (cError != ERROR_SUCCESS) {
-                                    ShowWin32Error(cError, "ExtractCallback()");
-                                }
-
-                                ++ctr;
-
-                                CurrentPosition += SizeOfImage;
-                                continue;
                             }
 
+                            CurrentPosition += 1;
                         }
 
-                        CurrentPosition += 1;
                     }
-
                     LocalFree(ReadData);
                 }
 
@@ -278,7 +396,7 @@ UINT ExtractDataDll(
 *
 * Purpose:
 *
-* Extract VDM database from MRT container (Malicious Removal Tool).
+* Extract VDM database from MRT container (Malicious software Removal Tool).
 *
 */
 UINT ExtractDataEXE(
@@ -313,6 +431,8 @@ UINT ExtractDataEXE(
     WCHAR TempFileName[MAX_PATH * 2];
 
     __try {
+
+        printf_s("%s: Attempt to extract and decrypt MRT container\r\n", __FUNCTION__);
 
         *TotalBytesWritten = 0;
         *TotalBytesRead = 0;
@@ -351,7 +471,7 @@ UINT ExtractDataEXE(
 
             StringCchLength(FileName, MAX_PATH, &FileNameLength);
             FileNameLength += (1 + MAX_PATH);
-            NewFileName = (LPWSTR)LocalAlloc(LPTR, FileNameLength * sizeof(WCHAR));
+            NewFileName = (LPWSTR)LocalAlloc(LMEM_ZEROINIT, FileNameLength * sizeof(WCHAR));
             if (NewFileName == NULL) {
                 Result = GetLastError();
                 break;
@@ -407,7 +527,7 @@ UINT ExtractDataEXE(
                 Chunk.L2 ^= Chunk.Key;
                 ChunkLength = Chunk.L0 + (Chunk.L1 << 8) + (Chunk.L2 << 16);
 
-                DecodedBuffer = (PBYTE)LocalAlloc(LPTR, ChunkLength);
+                DecodedBuffer = (PBYTE)LocalAlloc(LMEM_ZEROINIT, ChunkLength);
                 if (DecodedBuffer) {
                     memcpy(DecodedBuffer, RtlOffsetToPointer(DataPtr, sizeof(CHUNK_HEAD)), ChunkLength);
                     XorMemoryBuffer(DecodedBuffer, Chunk.Key, ChunkLength);
@@ -419,9 +539,11 @@ UINT ExtractDataEXE(
                             (Chunk.Key == DB_EXECUTABLE_IMAGE2) ||
                             (Chunk.Key == DB_EXECUTABLE_IMAGE3))
                         {
-                            printf("Found image at position %08llX with size = %lu\r\n", CurrentPosition, ChunkLength);
+                            printf_s("%s: Found image at position %08llX with size = %lu\r\n", __FUNCTION__,
+                                CurrentPosition,
+                                ChunkLength);
 
-                            cError = ExtractCallback(szCurrentDirectory, DecodedBuffer, ChunkLength, ctr);
+                            cError = ExtractCallback(szCurrentDirectory, DecodedBuffer, ChunkLength, ctr, FALSE);
                             if (cError != ERROR_SUCCESS) {
                                 ShowWin32Error(cError, "ExtractCallback()");
                             }
@@ -554,6 +676,8 @@ int main()
 
     HeapSetInformation(NULL, HeapEnableTerminationOnCorruption, NULL, 0);
 
+    printf_s("%s build at %s\r\n", WDEXTRACT_VERSION, __DATE__);
+
     LPWSTR *szArglist = CommandLineToArgvW(GetCommandLineW(), &nArgs);
     if (szArglist) {
 
@@ -573,6 +697,8 @@ int main()
 
     if (fCommand != TRUE)
         printf_s("Usage: wdextract file [-e]");
+    else
+        printf_s("\r\nBye!");
 
     return 0;
 }

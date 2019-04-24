@@ -12,6 +12,7 @@
    * dump VDLLs (Virtual DLLs);
    * dump VFS (Virtual File System) contents;
    * dump signatures auxiliary images;
+   * dump GAPA (Generic Application Level Protocol Analyzer) images used by NIS (Network Inspection System);
    * code can be adapted to dump type specific chunks of database (not implemented);
 * Faster than any script.
 
@@ -20,6 +21,9 @@ https://gist.githubusercontent.com/hfiref0x/e4b97fb7135c9a6f9f0787c07da0a99d/raw
 
 List of WD extracted images, mpasbase.vdm (version 1.291.0.0)
 https://gist.githubusercontent.com/hfiref0x/38e7845304d10c284220461c86491bdf/raw/39c999e59ff2a924932fe6db811555161596b4a7/gistfile1.txt
+
+List of NIS signatures from NisBase.vdm (version 119.0.0.0)
+https://gist.githubusercontent.com/hfiref0x/e9b3f185032fcd2afb31afe7bc9a05bd/raw/9bd9f9cc7c408acaff7b56b810c8597756d55d14/nis_sig.txt
 
 ### Usage
 wdextract file [-e]
