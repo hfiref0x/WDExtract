@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2019
+*  (C) COPYRIGHT AUTHORS, 2019 - 2020
 *
 *  TITLE:       UTILS.CPP
 *
-*  VERSION:     1.02
+*  VERSION:     1.03
 *
-*  DATE:        21 Apr 2019
+*  DATE:        10 Feb 2020
 *
 *  Program global support routines, ZLib, containers.
 *
@@ -17,7 +17,10 @@
 *
 *******************************************************************************/
 
+#define ZLIB_WINAPI
+
 #include "global.h"
+#include "zconf.h"
 #include "zlib.h"
 
 #define ZLIB_CHUNK 16384
@@ -26,7 +29,11 @@
 unsigned char ZLib_in[ZLIB_CHUNK];
 unsigned char ZLib_out[ZLIB_CHUNK];
 
-#pragma comment(lib, "zlibwapi.lib")
+#ifdef _M_IX86
+#pragma comment(lib, "zlib/lib/zlibwapi32.lib")
+#elif _M_AMD64
+#pragma comment(lib, "zlib/lib/zlibwapi64.lib")
+#endif
 
 HANDLE FileOpen(LPCWSTR lpFileName, DWORD dwDesiredAccess)
 {
@@ -48,7 +55,9 @@ ULONG FileWrite(PBYTE InputBuffer, ULONG Size, HANDLE hFile)
 ULONG FileRead(PBYTE OutputBuffer, ULONG Size, HANDLE hFile)
 {
     DWORD read = 0;
-    ReadFile(hFile, OutputBuffer, Size, &read, NULL);
+    if (!ReadFile(hFile, OutputBuffer, Size, &read, NULL))
+        return 0;
+
     return read;
 }
 
@@ -151,8 +160,8 @@ BOOLEAN IsValidContainer(
     _In_ ULONG Size
 )
 {
-    RMDX_HEADER *Header = (RMDX_HEADER*)Container;
-    CDATA_HEADER *DataHeader;
+    RMDX_HEADER* Header = (RMDX_HEADER*)Container;
+    CDATA_HEADER* DataHeader;
 
     __try {
 
@@ -191,7 +200,7 @@ BOOLEAN IsValidContainer(
 BOOLEAN IsContainerNIS(
     _In_ PVOID Container)
 {
-    CDATA_HEADER_NIS *NisDataHeader;
+    CDATA_HEADER_NIS* NisDataHeader;
 
     __try {
 
@@ -212,7 +221,7 @@ BOOLEAN IsContainerNIS(
 }
 
 void XorMemoryBuffer(
-    _In_ unsigned char *p,
+    _In_ unsigned char* p,
     _In_ unsigned char key,
     _In_ size_t length)
 {
@@ -374,10 +383,10 @@ BOOLEAN GetImageSize(
 
     ULONG size = 0;
 
-    IMAGE_OPTIONAL_HEADER32 *Opt32;
-    IMAGE_OPTIONAL_HEADER64 *Opt64;
-    IMAGE_SECTION_HEADER *SectionTableEntry;
-    IMAGE_DATA_DIRECTORY *SecurityDataDirectory;
+    IMAGE_OPTIONAL_HEADER32* Opt32;
+    IMAGE_OPTIONAL_HEADER64* Opt64;
+    IMAGE_SECTION_HEADER* SectionTableEntry;
+    IMAGE_DATA_DIRECTORY* SecurityDataDirectory;
 
     __try {
 
@@ -519,10 +528,10 @@ BOOLEAN ExtractImageNameFromExport(
 )
 {
     PIMAGE_NT_HEADERS NtHeaders = NULL;
-    IMAGE_DATA_DIRECTORY *DataDirectory;
-    IMAGE_EXPORT_DIRECTORY *Exports;
-    IMAGE_OPTIONAL_HEADER32 *Opt32;
-    IMAGE_OPTIONAL_HEADER64 *Opt64;
+    IMAGE_DATA_DIRECTORY* DataDirectory;
+    IMAGE_EXPORT_DIRECTORY* Exports;
+    IMAGE_OPTIONAL_HEADER32* Opt32;
+    IMAGE_OPTIONAL_HEADER64* Opt64;
 
     WORD Machine;
     ULONG ExportDirOffset;

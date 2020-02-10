@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2019
+*  (C) COPYRIGHT AUTHORS, 2019 - 2020
 *
-*  TITLE:       MAIN.CPP
+*  TITLE:       WDEXTRACT.CPP
 *
-*  VERSION:     1.02
+*  VERSION:     1.03
 *
-*  DATE:        22 Apr 2019
+*  DATE:        10 Feb 2020
 *
 *  WDEXTRACT main logic and entrypoint.
 *
@@ -27,7 +27,7 @@
 #define CODEBLOB_OPEN               L"<CodeBlob>"
 #define CODEBLOB_CLOSE              L"</CodeBlob>"
 
-#define WDEXTRACT_VERSION           "wdextract 1.02"
+#define WDEXTRACT_VERSION           "wdextract 1.03"
 
 typedef struct _LANGANDCODEPAGE {
     WORD wLanguage;
@@ -183,11 +183,13 @@ UINT ExtractDataXML_BruteForce(
                 if (OpenBlob) {
 
                     OpenBlob += tl1;
-                    SIZE_T ChunkLength = 0;
+                    ULONG ChunkLength = 0;
                     WCHAR *ptr = OpenBlob;
-                    while ((*ptr != L'<') && (ptr < MaximumPosition)) {
-                        ChunkLength++;
-                        ptr++;
+                    if (ptr) {
+                        while ((*ptr != L'<') && (ptr < MaximumPosition)) {
+                            ChunkLength++;
+                            ptr++;
+                        }
                     }
                     if (ptr) {
 
@@ -201,9 +203,9 @@ UINT ExtractDataXML_BruteForce(
                             if (CryptStringToBinary(OpenBlob, (DWORD)ChunkLength,
                                 CRYPT_STRING_BASE64, pbBinary, &cbBinary, NULL, NULL))
                             {
-                                printf_s("%s: Found image at position %08llX with size = %lu\r\n", __FUNCTION__,
+                                printf_s("%s: Found image at position %08IX with size = %lu\r\n", __FUNCTION__,
                                     (ULONG_PTR)OpenBlob,
-                                    (DWORD)ChunkLength);
+                                    ChunkLength);
 
                                 ExtractCallback(szCurrentDirectory, pbBinary, cbBinary, ctr, TRUE);
                                 ++ctr;
@@ -251,7 +253,7 @@ UINT ExtractDataDll(
     ULONG ContainerSize = 0, totalBytesWritten = 0, cError;
 
     LPWSTR  NewFileName;
-    SIZE_T  FileNameLength = 0;
+    size_t  FileNameLength = 0;
 
     PVOID Data;
     PRMDX_HEADER ContainerHeader;
@@ -288,7 +290,10 @@ UINT ExtractDataDll(
 
         DataHeader = (PCDATA_HEADER)RtlOffsetToPointer(ContainerHeader, ContainerHeader->DataOffset);
 
-        StringCchLength(FileName, MAX_PATH, &FileNameLength);
+        if (FAILED(StringCchLength(FileName, MAX_PATH, &FileNameLength))) {
+            return GetLastError();
+        }
+
         FileNameLength += (1 + MAX_PATH);
         NewFileName = (LPWSTR)LocalAlloc(LMEM_ZEROINIT, FileNameLength * sizeof(WCHAR));
         if (NewFileName == NULL)
@@ -426,7 +431,7 @@ UINT ExtractDataEXE(
     CHUNK_HEAD Chunk;
 
     LPWSTR  NewFileName;
-    SIZE_T  FileNameLength = 0;
+    size_t  FileNameLength = 0;
     WCHAR szCurrentDirectory[MAX_PATH + 1];
     WCHAR TempFileName[MAX_PATH * 2];
 
@@ -469,7 +474,11 @@ UINT ExtractDataEXE(
 
         do {
 
-            StringCchLength(FileName, MAX_PATH, &FileNameLength);
+            if (FAILED(StringCchLength(FileName, MAX_PATH, &FileNameLength))) {
+                Result = GetLastError();
+                break;
+            }
+
             FileNameLength += (1 + MAX_PATH);
             NewFileName = (LPWSTR)LocalAlloc(LMEM_ZEROINIT, FileNameLength * sizeof(WCHAR));
             if (NewFileName == NULL) {
@@ -539,7 +548,7 @@ UINT ExtractDataEXE(
                             (Chunk.Key == DB_EXECUTABLE_IMAGE2) ||
                             (Chunk.Key == DB_EXECUTABLE_IMAGE3))
                         {
-                            printf_s("%s: Found image at position %08llX with size = %lu\r\n", __FUNCTION__,
+                            printf_s("%s: Found image at position %08IX with size = %lu\r\n", __FUNCTION__,
                                 CurrentPosition,
                                 ChunkLength);
 
@@ -569,7 +578,9 @@ UINT ExtractDataEXE(
 
         } while (FALSE);
 
-        if (tempFileHandle != INVALID_HANDLE_VALUE) FileClose(tempFileHandle);
+        if (tempFileHandle) {
+            if (tempFileHandle != INVALID_HANDLE_VALUE) FileClose(tempFileHandle);
+        }
         if (ExtractedModule) FreeLibrary(ExtractedModule);
         DeleteFile(TempFileName);
     }
@@ -647,7 +658,7 @@ void ExtractData(LPWSTR FileName, BOOLEAN ExtractImageChunks)
                     TotalBytesWritten / 1024);
             }
 
-            printf_s(szTotalMsg);
+            printf_s("%s", szTotalMsg);
 
         }
         else {
@@ -669,7 +680,7 @@ void ExtractData(LPWSTR FileName, BOOLEAN ExtractImageChunks)
 * Program entry point (CRT).
 *
 */
-int main()
+int __cdecl main()
 {
     INT nArgs = 0;
     BOOLEAN fCommand = FALSE, fExtractImageChunks = FALSE;

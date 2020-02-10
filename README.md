@@ -42,7 +42,7 @@ Note: base will be unpacked/decrypted to source directory as %originalname%.extr
 # Build
 
 + Source code written in C;
-+ Built with MSVS 2017 with Windows SDK 17763 installed;
++ Built with MSVS 2017/2019 with Windows SDK 17763/18362 installed;
 + Can be built with previous versions of MSVS and SDK's.
 
 # Related references and tools
@@ -59,4 +59,4 @@ No actual dumped/extracted/unpacked binary data included or will be included in 
 Uses ZLIB Data Compression Library (https://github.com/madler/zlib)
 
 # Authors
-(c) 2019 WDEXTRACT Project
+(c) 2019 - 2020 WDEXTRACT Project

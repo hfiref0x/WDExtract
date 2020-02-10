@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2019
+*  (C) COPYRIGHT AUTHORS, 2019 - 2020
 *
 *  TITLE:       GLOBAL.H
 *
-*  VERSION:     1.02
+*  VERSION:     1.03
 *
-*  DATE:        22 Apr 2019
+*  DATE:        10 Feb 2020
 *
 *  Common include header file.
 *
@@ -27,6 +27,7 @@
 #include <strsafe.h>
 #include <dbghelp.h>
 #include <wincrypt.h>
+#include <intrin.h>
 #include "mpengine.h"
 #include "utils.h"
 
