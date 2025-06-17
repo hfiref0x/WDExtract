@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2019 - 2020
+*  (C) COPYRIGHT AUTHORS, 2019 - 2025
 *
 *  TITLE:       UTILS.CPP
 *
-*  VERSION:     1.03
+*  VERSION:     1.10
 *
-*  DATE:        10 Feb 2020
+*  DATE:        16 Jun 2025
 *
 *  Program global support routines, ZLib, containers.
 *
@@ -37,7 +37,7 @@ unsigned char ZLib_out[ZLIB_CHUNK];
 
 HANDLE FileOpen(LPCWSTR lpFileName, DWORD dwDesiredAccess)
 {
-    return CreateFile(lpFileName, dwDesiredAccess, 0, NULL, OPEN_EXISTING, 0, NULL);
+    return CreateFile(lpFileName, dwDesiredAccess, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
 }
 
 HANDLE FileCreate(LPCWSTR lpFileName)
@@ -70,7 +70,7 @@ ULONG FileRead(PBYTE OutputBuffer, ULONG Size, HANDLE hFile)
 *
 */
 PVOID MapContainerFile(
-    _In_ LPWSTR FileName
+    _In_ LPCWSTR FileName
 )
 {
     HANDLE hFile, hMapping = NULL;
@@ -139,10 +139,8 @@ PBYTE GetContainerFromResource(
 
 
     Data = (PBYTE)LockResource(hResData);
-    if (Data) {
-        if (ContainerSize)
-            *ContainerSize = dwSize;
-    }
+    if (Data && ContainerSize)
+        *ContainerSize = dwSize;
 
     return Data;
 }
@@ -165,13 +163,16 @@ BOOLEAN IsValidContainer(
 
     __try {
 
+        if (!Container || Size < sizeof(RMDX_HEADER))
+            return FALSE;
+
         if (Header->Signature != RMDX_MAGIC)
             return FALSE;
 
         if (Header->DataOffset == 0 || Header->DataSize == 0)
             return FALSE;
 
-        if ((Size == 0) || (Header->DataOffset >= Size))
+        if (Header->DataOffset >= Size)
             return FALSE;
 
         DataHeader = (PCDATA_HEADER)RtlOffsetToPointer(Header, Header->DataOffset);
@@ -260,11 +261,7 @@ BOOLEAN ZLibUnpack(
     *TotalBytesWritten = 0;
     *TotalBytesRead = 0;
 
-    strm.zalloc = Z_NULL;
-    strm.zfree = Z_NULL;
-    strm.opaque = Z_NULL;
-    strm.avail_in = 0;
-    strm.next_in = Z_NULL;
+    RtlZeroMemory(&strm, sizeof(strm));
     ret = inflateInit2(&strm, -15);
     if (ret != Z_OK) {
         return FALSE;
@@ -274,7 +271,6 @@ BOOLEAN ZLibUnpack(
     __stosb(ZLib_out, 0, sizeof(ZLib_out));
 
     do {
-
         CopyLength = ZLIB_CHUNK;
         if (CurrentPosition + CopyLength > ResourceSize)
             CopyLength = ResourceSize - CurrentPosition;
@@ -292,24 +288,23 @@ BOOLEAN ZLibUnpack(
             strm.next_out = ZLib_out;
             ret = inflate(&strm, Z_NO_FLUSH);
 
-            switch (ret) {
-            case Z_NEED_DICT:
-                ret = Z_DATA_ERROR;
-            case Z_DATA_ERROR:
-            case Z_MEM_ERROR:
+            if (ret == Z_NEED_DICT || ret == Z_DATA_ERROR || ret == Z_MEM_ERROR) {
                 inflateEnd(&strm);
                 *TotalBytesWritten = totalBytesWritten;
                 *TotalBytesRead = CurrentPosition;
                 return FALSE;
             }
+
             have = ZLIB_CHUNK - strm.avail_out;
-            got = FileWrite(ZLib_out, have, OutputFileHandle);
-            totalBytesWritten += got;
-            if (got != have) {
-                inflateEnd(&strm);
-                *TotalBytesWritten = totalBytesWritten;
-                *TotalBytesRead = CurrentPosition;
-                return FALSE;
+            if (have > 0) {
+                got = FileWrite(ZLib_out, have, OutputFileHandle);
+                totalBytesWritten += got;
+                if (got != have) {
+                    inflateEnd(&strm);
+                    *TotalBytesWritten = totalBytesWritten;
+                    *TotalBytesRead = CurrentPosition;
+                    return FALSE;
+                }
             }
         } while (strm.avail_out == 0);
 
@@ -333,31 +328,31 @@ BOOLEAN ZLibUnpack(
 */
 void ShowWin32Error(
     _In_ DWORD ErrorCode,
-    _In_ LPCSTR Function)
+    _In_ LPCWSTR Function)
 {
     LPVOID lpMsgBuf;
     LPVOID lpDisplayBuf;
+    SIZE_T bufSize;
 
-    if (FormatMessageA(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER |
-        FORMAT_MESSAGE_FROM_SYSTEM |
+    if (FormatMessage(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | 
+        FORMAT_MESSAGE_FROM_SYSTEM | 
         FORMAT_MESSAGE_IGNORE_INSERTS,
         NULL,
         ErrorCode,
         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        (LPSTR)&lpMsgBuf,
+        (LPWSTR)&lpMsgBuf,
         0, NULL))
     {
-
-        lpDisplayBuf = (LPVOID)LocalAlloc(LMEM_ZEROINIT,
-            (strlen((LPSTR)lpMsgBuf) + strlen((LPSTR)Function) + 40) * sizeof(CHAR));
+        bufSize = (wcslen((LPWSTR)lpMsgBuf) + wcslen((LPWSTR)Function) + 40) * sizeof(WCHAR);
+        lpDisplayBuf = (LPVOID)LocalAlloc(LMEM_ZEROINIT, bufSize);
         if (lpDisplayBuf) {
 
-            StringCchPrintfA((LPSTR)lpDisplayBuf,
+            StringCchPrintf((LPWSTR)lpDisplayBuf,
                 LocalSize(lpDisplayBuf) / sizeof(CHAR),
-                "%s failed with error %u: %s",
-                Function, ErrorCode, (LPSTR)lpMsgBuf);
-            printf_s("%s", (LPSTR)lpDisplayBuf);
+                L"%s failed with error %u: %s",
+                Function, ErrorCode, (LPWSTR)lpMsgBuf);
+            wprintf_s(L"%s", (LPWSTR)lpDisplayBuf);
 
             LocalFree(lpDisplayBuf);
         }
@@ -388,9 +383,12 @@ BOOLEAN GetImageSize(
     IMAGE_SECTION_HEADER* SectionTableEntry;
     IMAGE_DATA_DIRECTORY* SecurityDataDirectory;
 
-    __try {
+    if (!ImageBase || !SizeOfImage)
+        return FALSE;
 
-        *SizeOfImage = 0;
+    *SizeOfImage = 0;
+
+    __try {
 
         NtHeaders = (PIMAGE_NT_HEADERS)((PCHAR)ImageBase + ((PIMAGE_DOS_HEADER)ImageBase)->e_lfanew);
         Machine = NtHeaders->FileHeader.Machine;
@@ -443,17 +441,17 @@ BOOLEAN IsValidImage(
     _In_ PVOID ImageBase
 )
 {
+    WORD Machine, Magic;
     PIMAGE_NT_HEADERS NtHeaders = NULL;
 
-    WORD Machine, Magic;
+    if (!ImageBase)
+        return FALSE;
 
     __try {
-
         if (((PIMAGE_DOS_HEADER)ImageBase)->e_magic != IMAGE_DOS_SIGNATURE)
             return FALSE;
 
         NtHeaders = (PIMAGE_NT_HEADERS)((PCHAR)ImageBase + ((PIMAGE_DOS_HEADER)ImageBase)->e_lfanew);
-
         if (NtHeaders->Signature != IMAGE_NT_SIGNATURE)
             return FALSE;
 
@@ -481,7 +479,7 @@ BOOLEAN IsValidImage(
     return TRUE;
 }
 
-#define ALIGN_DOWN(x, align) (x &~ (align - 1))
+#define ALIGN_DOWN(x, align) ((x) &~ ((align) - 1))
 
 DWORD RvaToOffset(
     _In_ PIMAGE_NT_HEADERS NtHeaders,
@@ -496,8 +494,7 @@ DWORD RvaToOffset(
         sizeof(IMAGE_FILE_HEADER) +
         NtHeaders->FileHeader.SizeOfOptionalHeader);
 
-    i = NtHeaders->FileHeader.NumberOfSections;
-    while (i > 0) {
+    for (i = 0; i < NtHeaders->FileHeader.NumberOfSections; i++) {
         if (Rva >= SectionTableEntry->VirtualAddress &&
             Rva < (SectionTableEntry->VirtualAddress + SectionTableEntry->Misc.VirtualSize))
         {
@@ -505,8 +502,7 @@ DWORD RvaToOffset(
             Offset += ALIGN_DOWN(SectionTableEntry->PointerToRawData, NtHeaders->OptionalHeader.FileAlignment);
             return Offset;
         }
-        i -= 1;
-        SectionTableEntry += 1;
+        SectionTableEntry++;
     }
 
     return 0;
@@ -566,7 +562,7 @@ BOOLEAN ExtractImageNameFromExport(
                     NameOffset = RvaToOffset(NtHeaders, Exports->Name);
                     if (NameOffset) {
                         Name = (CHAR*)RtlOffsetToPointer(ImageBase, NameOffset);
-                        MultiByteToWideChar(GetACP(), 0, Name, -1, ImageName, cchImageName);
+                        MultiByteToWideChar(CP_ACP, 0, Name, -1, ImageName, cchImageName);
                         return TRUE;
                     }
                 }
@@ -578,4 +574,330 @@ BOOLEAN ExtractImageNameFromExport(
         return FALSE;
     }
     return FALSE;
+}
+
+/*
+* GetDeltaBlobSig
+*
+* Purpose:
+*
+* Return pointer to the delta blob signature in the delta file.
+*
+*/
+PBYTE GetDeltaBlobSig(
+    _In_ PBYTE deltaData
+)
+{
+    PCSIG_ENTRY entry = (PCSIG_ENTRY)deltaData;
+    DWORD sigSize = GET_SIG_SIZE(entry);
+
+    return deltaData + sigSize + sizeof(entry->Type) + sizeof(entry->SizeLow) + sizeof(entry->SizeHigh);
+}
+
+/*
+* ExtractCallback
+*
+* Purpose:
+*
+* Save image chunk to file with original name (either from export directory or file version info).
+*
+*/
+ULONG ExtractCallback(
+    _In_ LPWSTR CurrentDirectory,
+    _In_ PVOID ChunkPtr,
+    _In_ ULONG ChunkLength,
+    _In_ ULONG ChunkId,
+    _In_ BOOLEAN fNIS
+)
+{
+    BOOLEAN FileNameAvailable;
+    ULONG Result = ERROR_SUCCESS;
+    HANDLE FileHandle;
+    WCHAR szImageName[MAX_PATH + 1];
+    WCHAR ImageChunkFileName[MAX_FILENAME_BUFFER_LENGTH + 1];
+    WCHAR ImageChunkFileName2[MAX_FILENAME_BUFFER_LENGTH + 1];
+
+    LPCWSTR lpDefaultChunkName;
+
+    if (fNIS)
+        lpDefaultChunkName = DEFAULT_CHUNK_NAME_NIS;
+    else
+        lpDefaultChunkName = DEFAULT_CHUNK_NAME;
+
+    RtlSecureZeroMemory(szImageName, sizeof(szImageName));
+    FileNameAvailable = ExtractImageNameFromExport(ChunkPtr, (LPWSTR)&szImageName, MAX_PATH);
+
+    if (FileNameAvailable) {
+
+        RtlSecureZeroMemory(ImageChunkFileName, MAX_FILENAME_BUFFER_LENGTH);
+        StringCchPrintf(ImageChunkFileName, MAX_FILENAME_BUFFER_LENGTH,
+            TEXT("%s\\chunks\\%s_%s%u.dll"), CurrentDirectory, szImageName, lpDefaultChunkName, ChunkId);
+
+        FileHandle = FileCreate(ImageChunkFileName);
+        if (FileHandle != INVALID_HANDLE_VALUE) {
+            if (FileWrite((PBYTE)ChunkPtr, ChunkLength, FileHandle) != ChunkLength) {
+                Result = GetLastError();
+                if (Result == ERROR_SUCCESS) Result = ERROR_WRITE_FAULT;
+            }
+            CloseHandle(FileHandle);
+        }
+        else {
+            return GetLastError();
+        }
+
+    }
+    else {
+
+        DWORD dwSize;
+        DWORD dwHandle;
+        PVOID vinfo = NULL;
+        LPTRANSLATE lpTranslate = NULL;
+        LPWSTR lpOriginalFileName;
+
+        WCHAR szKey[100 + 1];
+
+        if (FAILED(StringCchPrintf(ImageChunkFileName, MAX_FILENAME_BUFFER_LENGTH,
+            TEXT("%s\\chunks\\%s%u.dll"), CurrentDirectory, lpDefaultChunkName, ChunkId)))
+        {
+            return ERROR_INSUFFICIENT_BUFFER;
+        }
+
+        FileHandle = FileCreate(ImageChunkFileName);
+        if (FileHandle != INVALID_HANDLE_VALUE) {
+            if (FileWrite((PBYTE)ChunkPtr, ChunkLength, FileHandle) != ChunkLength) {
+                Result = GetLastError();
+                if (Result == ERROR_SUCCESS) Result = ERROR_WRITE_FAULT;
+            }
+            CloseHandle(FileHandle);
+        }
+        else {
+            return GetLastError();
+        }
+
+        dwSize = GetFileVersionInfoSize(ImageChunkFileName, &dwHandle);
+        if (dwSize) {
+            vinfo = LocalAlloc(LMEM_ZEROINIT, (SIZE_T)dwSize);
+            if (vinfo) {
+                if (GetFileVersionInfo(ImageChunkFileName, 0, dwSize, vinfo)) {
+                    dwSize = 0;
+                    if (VerQueryValue(vinfo,
+                        L"\\VarFileInfo\\Translation",
+                        (LPVOID*)&lpTranslate,
+                        (PUINT)&dwSize) && dwSize > 0)
+                    {
+                        if (SUCCEEDED(StringCchPrintf(szKey, _countof(szKey),
+                            TEXT("\\StringFileInfo\\%04x%04x\\OriginalFileName"),
+                            lpTranslate[0].wLanguage, lpTranslate[0].wCodePage)))
+                        {
+                            if (VerQueryValue(vinfo, szKey, (LPVOID*)&lpOriginalFileName, (PUINT)&dwSize)) {
+
+                                RtlSecureZeroMemory(ImageChunkFileName2, sizeof(ImageChunkFileName2));
+                                if (SUCCEEDED(StringCchPrintf(ImageChunkFileName2, MAX_FILENAME_BUFFER_LENGTH,
+                                    TEXT("%s\\chunks\\%s_%s%u.dll"), CurrentDirectory, lpOriginalFileName,
+                                    lpDefaultChunkName, ChunkId)))
+                                {
+                                    if (!MoveFileEx(ImageChunkFileName, ImageChunkFileName2,
+                                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                                    {
+                                        Result = GetLastError();
+                                    }
+                                }
+                                else {
+                                    Result = ERROR_INSUFFICIENT_BUFFER;
+                                }
+                            }
+                        }
+                    }
+                }
+                LocalFree(vinfo);
+            }
+            else {
+                Result = GetLastError();
+            }
+        }
+    }
+
+    return Result;
+}
+
+/*
+* ExtractDataXML_BruteForce
+*
+* Purpose:
+*
+* Extract image chunks from XML scheme.
+*
+*/
+UINT ExtractDataXML_BruteForce(
+    _In_ LPWSTR szCurrentDirectory,
+    _In_ PVOID Container,
+    _In_ LPCWSTR OpenElement,
+    _In_ LPCWSTR CloseElement,
+    _Out_ PULONG ExtractedChunks
+)
+{
+    ULONG ctr = 0;
+    SIZE_T tl1, tl2;
+    CDATA_HEADER_NIS* NisDataHeader = (CDATA_HEADER_NIS*)Container;
+    PWCHAR p = (PWCHAR)&NisDataHeader->Data;
+    LPWSTR pConverted = NULL;
+
+    INT nLength = MultiByteToWideChar(CP_ACP, 0, (CHAR*)p, -1, NULL, 0);
+    if (nLength) {
+        pConverted = (LPWSTR)LocalAlloc(LMEM_ZEROINIT, (1 + (SIZE_T)nLength) * sizeof(WCHAR));
+        if (pConverted) {
+
+            tl1 = wcslen(OpenElement);
+            tl2 = wcslen(CloseElement);
+
+            MultiByteToWideChar(CP_ACP, 0, (CHAR*)p, -1, pConverted, nLength);
+
+            PWCHAR CurrentPosition = pConverted;
+            PWCHAR MaximumPosition = (PWCHAR)(pConverted + wcslen(pConverted)) - tl2;
+
+            while (CurrentPosition < MaximumPosition) {
+
+                WCHAR* OpenBlob = wcsstr(CurrentPosition, OpenElement);
+                if (OpenBlob) {
+
+                    OpenBlob += tl1;
+                    if (OpenBlob >= MaximumPosition) {
+                        break;
+                    }
+
+                    ULONG ChunkLength = 0;
+                    WCHAR* ptr = OpenBlob;
+                    while (ptr < MaximumPosition && *ptr != L'<') {
+                        ChunkLength++;
+                        ptr++;
+                    }
+
+                    if (ptr < MaximumPosition && ChunkLength > 0) {
+
+                        DWORD cbBinary = 0;
+                        CryptStringToBinary(OpenBlob, (DWORD)ChunkLength,
+                            CRYPT_STRING_BASE64, NULL, (DWORD*)&cbBinary, NULL, NULL);
+
+                        BYTE* pbBinary = (BYTE*)LocalAlloc(LMEM_ZEROINIT, cbBinary);
+                        if (pbBinary) {
+
+                            if (CryptStringToBinary(OpenBlob, (DWORD)ChunkLength,
+                                CRYPT_STRING_BASE64, pbBinary, &cbBinary, NULL, NULL))
+                            {
+                                wprintf_s(L"%s: Found image at position %08IX with size = %lu\r\n", __FUNCTIONW__,
+                                    (ULONG_PTR)OpenBlob,
+                                    ChunkLength);
+
+                                UINT extractResult = ExtractCallback(szCurrentDirectory, pbBinary, cbBinary, ctr, TRUE);
+                                if (extractResult == ERROR_SUCCESS) {
+                                    ++ctr;
+                                }
+                                else {
+                                    wprintf_s(L"%s: ExtractCallback failed with error %u\r\n", __FUNCTIONW__, extractResult);
+                                }
+                            }
+                            LocalFree(pbBinary);
+                        }
+                    }
+
+                    CurrentPosition = (OpenBlob + ChunkLength);
+                    continue;
+                }
+
+                CurrentPosition++;
+            }
+
+        }
+    }
+
+    if (pConverted) LocalFree(pConverted);
+    *ExtractedChunks = ctr;
+
+    return ERROR_SUCCESS;
+}
+
+/*
+* ExtractImageChunksFromBuffer
+*
+* Purpose:
+*
+* Extract PE image chunks from memory buffer.
+*
+*/
+UINT ExtractImageChunksFromBuffer(
+    _In_ LPWSTR szCurrentDirectory,
+    _In_ PVOID Buffer,
+    _In_ DWORD BufferSize,
+    _Out_ PULONG ExtractedChunks,
+    _In_opt_ LPCWSTR CallerName
+)
+{
+    UINT Result = ERROR_SUCCESS;
+    ULONG ctr = 0, cError;
+    LPCWSTR FunctionName = CallerName ? CallerName : __FUNCTIONW__;
+
+    *ExtractedChunks = 0;
+
+    if (CreateDirectory(L"chunks", NULL) || GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (!SetCurrentDirectory(L"chunks")) {
+            wprintf_s(L"%s: Failed to change directory to chunks folder\r\n", FunctionName);
+            return ERROR_DIRECTORY;
+        }
+    }
+    else {
+        wprintf_s(L"%s: Failed to create chunks directory\r\n", FunctionName);
+        return ERROR_DIRECTORY;
+    }
+
+    if (IsContainerNIS(Buffer)) {
+        wprintf_s(L"%s: Container is NIS\r\n", FunctionName);
+
+        Result = ExtractDataXML_BruteForce(szCurrentDirectory,
+            Buffer,
+            CODEBLOB_OPEN,
+            CODEBLOB_CLOSE,
+            &ctr);
+    }
+    else {
+        ULONG CurrentPosition = 0;
+        ULONG SizeOfImage;
+        PBYTE CurrentPtr;
+
+        while (CurrentPosition < BufferSize - sizeof(WORD)) {
+            CurrentPtr = (PBYTE)RtlOffsetToPointer(Buffer, CurrentPosition);
+
+            if ((*(PWORD)(CurrentPtr)) == 'ZM') {
+                SizeOfImage = 0;
+
+                if (IsValidImage(CurrentPtr) && GetImageSize(CurrentPtr, &SizeOfImage)) {
+                    if (SizeOfImage == 0 || CurrentPosition + SizeOfImage > BufferSize) {
+                        CurrentPosition += 1;
+                        continue;
+                    }
+
+                    wprintf_s(L"%s: Found image at position %08X with size = %lu\r\n", FunctionName,
+                        CurrentPosition,
+                        SizeOfImage);
+
+                    cError = ExtractCallback(szCurrentDirectory, CurrentPtr, SizeOfImage, ctr, FALSE);
+                    if (cError != ERROR_SUCCESS) {
+                        ShowWin32Error(cError, L"ExtractCallback()");
+                    }
+                    else {
+                        ++ctr;
+                    }
+
+                    CurrentPosition += SizeOfImage;
+                    continue;
+                }
+            }
+
+            CurrentPosition += 1;
+        }
+
+        wprintf_s(L"%s: Extracted %lu image chunks\r\n", FunctionName, ctr);
+    }
+
+    *ExtractedChunks = ctr;
+    return Result;
 }

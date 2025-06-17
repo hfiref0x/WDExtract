@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2019
+*  (C) COPYRIGHT AUTHORS, 2019 - 2025
 *
 *  TITLE:       MPENGINE.H
 *
-*  VERSION:     1.02
+*  VERSION:     1.10
 *
-*  DATE:        22 Apr 2019
+*  DATE:        16 Jun 2025
 *
 *  MpEngine related structures and definitions.
 *
@@ -76,6 +76,21 @@ typedef struct _VFS_ENTRY {
     ULONG Reserved9;
     ULONG Reserved10;
 } VFS_ENTRY, *PVFS_ENTRY;
+
+#pragma pack(push, 1)
+typedef struct _CSIG_ENTRY {
+    BYTE Type;
+    BYTE SizeLow;
+    WORD SizeHigh;
+    BYTE Data[1];
+} CSIG_ENTRY, * PCSIG_ENTRY;
+
+typedef struct _CDELTA_BLOB {
+    DWORD Size;
+    DWORD Checksum;
+    BYTE Data[1];
+} CDELTA_BLOB, * PCDELTA_BLOB;
+#pragma pack(pop)
 
 #define DB_SMART_CODE_SIGNATURE 0x20
 #define DB_UNKNOWN_21           0x21
