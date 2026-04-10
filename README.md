@@ -39,7 +39,8 @@ wdextract baseFile -m deltaFile [-e]
 * deltaFile - filename of delta file to merge with base file;
 * -e optional parameter, extract all found PE image chunks from container after unpacking/decrypting/merging;
 * -ec extract raw RMDX container without further processing (incompatible with -e and -m options);
-* -m merge base VDM file with delta file.
+* -m merge base VDM file with delta file;
+* -mc verify checksum of the merged file.
 
 Example:
 + wdextract c:\wdbase\mpasbase.vdm
@@ -49,6 +50,7 @@ Example:
 + wdextract c:\wdbase\mpasbase.vdm -ec
 + wdextract c:\wdbase\mpasbase.extracted c:\wdbase\mpasdlta.extracted -m
 + wdextract c:\wdbase\mpasbase.extracted c:\wdbase\mpasdlta.extracted -m -e
++ wdextract c:\wdbase\mpasbase.extracted -m c:\wdbase\mpasdlta.extracted [-e] [-mc]
 
 # Notes 
 + Input file will be unpacked/decrypted to source directory as %originalname%.extracted (e.g. if original file c:\wdbase\mpasbase.vdm, unpacked will be c:\wdbase\mpasbase.extracted). Raw containers will be extracted to %originalname%.rdmx. Merged files will be saved as %originalname%.merged. Image chunks will be dumped to created "chunks" directory in the wdextract current directory (e.g. if wdextract run from c:\wdbase it will be c:\wdbase\chunks directory). Output files always overwrite existing.
@@ -57,7 +59,7 @@ Example:
 # Build
 
 + Source code written in C;
-+ Built with MSVS 2017/2019/2022 with Windows SDK 17763/18362/20348 installed;
++ Built with MSVS 2022/2026 with Windows SDK 19041 and higher installed;
 + Can be built with previous versions of MSVS and SDK's.
 
 # Related references and tools
