@@ -4,9 +4,9 @@
 *
 *  TITLE:       UTILS.H
 *
-*  VERSION:     1.12
+*  VERSION:     1.13
 *
-*  DATE:        20 Feb 2026
+*  DATE:        10 Apr 2026
 *
 *  Support routines header file.
 *

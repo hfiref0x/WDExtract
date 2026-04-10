@@ -4,9 +4,9 @@
 *
 *  TITLE:       UTILS.CPP
 *
-*  VERSION:     1.12
+*  VERSION:     1.13
 *
-*  DATE:        20 Feb 2026
+*  DATE:        10 Apr 2026
 *
 *  Program global support routines, ZLib, containers.
 *
@@ -572,18 +572,42 @@ PBYTE GetDeltaBlobSig(
     PCSIG_ENTRY entry;
     DWORD sigSize;
     SIZE_T offset;
+    SIZE_T entrySize;
 
     if (!deltaData || deltaDataSize < sizeof(CSIG_ENTRY))
         return NULL;
 
-    entry = (PCSIG_ENTRY)deltaData;
-    sigSize = GET_SIG_SIZE(entry);
+    __try {
 
-    offset = sigSize + sizeof(entry->Type) + sizeof(entry->SizeLow) + sizeof(entry->SizeHigh);
-    if (offset > deltaDataSize)
+        entry = (PCSIG_ENTRY)deltaData;
+        sigSize = GET_SIG_SIZE(entry);
+        entrySize = sizeof(entry->Type) + sizeof(entry->SizeLow) + sizeof(entry->SizeHigh) + sigSize;
+
+        if (entrySize > deltaDataSize)
+            return NULL;
+
+        if (entry->Type != SIGNATURE_TYPE_DELTA_BLOB_RECINFO)
+            return NULL;
+
+        offset = entrySize;
+        if (offset + sizeof(CSIG_ENTRY) > deltaDataSize)
+            return NULL;
+
+        entry = (PCSIG_ENTRY)(deltaData + offset);
+        sigSize = GET_SIG_SIZE(entry);
+        entrySize = sizeof(entry->Type) + sizeof(entry->SizeLow) + sizeof(entry->SizeHigh) + sigSize;
+
+        if (offset + entrySize > deltaDataSize)
+            return NULL;
+
+        if (entry->Type != SIGNATURE_TYPE_DELTA_BLOB)
+            return NULL;
+
+        return (PBYTE)entry;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
-
-    return deltaData + offset;
+    }
 }
 
 /*

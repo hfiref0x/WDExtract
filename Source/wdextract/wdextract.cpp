@@ -4,9 +4,9 @@
 *
 *  TITLE:       WDEXTRACT.CPP
 *
-*  VERSION:     1.12
+*  VERSION:     1.13
 *
-*  DATE:        20 Feb 2026
+*  DATE:        10 Apr 2026
 *
 *  WDEXTRACT main logic and entrypoint.
 *
@@ -19,10 +19,46 @@
 
 #include "global.h"
 
-#define WDEXTRACT_VERSION           L"wdextract 1.12"
+#define WDEXTRACT_VERSION           L"wdextract 1.13"
 #define WDEXTRACT_COPYRIGHT         L"(c) 2019 - 2026 hfiref0x"
 #define SUFFIX_RMDX_CCH             6   // L".rmdx" + null
 #define SUFFIX_EXTRACTED_CCH        11  // L".extracted" + null
+
+/*
+* ComputeDeltaJamCrc32
+*
+* Purpose:
+*
+* Calculate a checksum for a block of data using JAMCRC.
+*
+*/
+DWORD ComputeDeltaJamCrc32(
+    _In_reads_bytes_(BufferSize) PBYTE Buffer,
+    _In_ DWORD BufferSize
+)
+{
+    DWORD crc, i, j;
+
+    if (Buffer == NULL)
+        return 0;
+
+    crc = 0xFFFFFFFF;
+
+    for (i = 0; i < BufferSize; i++) {
+        crc ^= Buffer[i];
+
+        for (j = 0; j < 8; j++) {
+            if (crc & 1) {
+                crc = (crc >> 1) ^ 0xEDB88320;
+            }
+            else {
+                crc >>= 1;
+            }
+        }
+    }
+
+    return crc;
+}
 
 /*
 * ExtractContainerOnly
@@ -214,7 +250,6 @@ UINT ExtractDataDll(
             }
 
             if (!ZLibUnpack(DataHeader, OutputFileHandle, &totalBytesWritten, TotalBytesRead)) {
-                Result = ERROR_INTERNAL_ERROR;
                 break;
             }
 
@@ -538,6 +573,263 @@ UINT ExtractDataEXE(
 }
 
 /*
+* MergeDeltaBuffer
+*
+* Purpose:
+*
+* Merge base VDM file data with delta file data.
+*
+*/
+UINT MergeDeltaBuffer(
+    _In_ PBYTE BaseBuffer,
+    _In_ DWORD BaseFileSize,
+    _In_ PBYTE DeltaBuffer,
+    _In_ DWORD DeltaFileSize,
+    _In_ BOOLEAN VerifyChecksum,
+    _Outptr_result_bytebuffer_maybenull_(*MergedSize) PBYTE* MergedBuffer,
+    _Out_ PDWORD MergedSize
+)
+{
+    WORD sizeX;
+    UINT Result;
+    PCSIG_ENTRY deltaBlobEntry;
+    PCDELTA_BLOB blob;
+    PBYTE outputBuffer;
+    PBYTE deltaBlob;
+    DWORD outputCapacity, blobSize, availableSize, index, databufSize;
+    DWORD offset, commandSize, copyCommandCount, literalCommandCount;
+    DWORD zeroLiteralCommandCount, largestCopyCommand, largestLiteralCommand;
+
+    if (MergedBuffer == NULL || MergedSize == NULL)
+        return ERROR_INVALID_PARAMETER;
+
+    *MergedBuffer = NULL;
+    *MergedSize = 0;
+
+    if (BaseBuffer == NULL || DeltaBuffer == NULL || BaseFileSize == 0 || DeltaFileSize == 0)
+        return ERROR_INVALID_PARAMETER;
+
+    Result = ERROR_INTERNAL_ERROR;
+    deltaBlobEntry = (PCSIG_ENTRY)GetDeltaBlobSig(DeltaBuffer, DeltaFileSize);
+    if (!deltaBlobEntry) {
+        wprintf_s(L"%s: Failed to locate delta blob signature\r\n", __FUNCTIONW__);
+        return ERROR_INVALID_DATA;
+    }
+
+    blobSize = GET_SIG_SIZE(deltaBlobEntry);
+    if (blobSize < sizeof(CDELTA_BLOB)) {
+        wprintf_s(L"%s: Invalid delta blob size 0x%08lX (%lu)\r\n",
+            __FUNCTIONW__, blobSize, blobSize);
+        return ERROR_INVALID_DATA;
+    }
+
+    blob = (PCDELTA_BLOB)deltaBlobEntry->Data;
+    deltaBlob = blob->Data;
+    availableSize = blobSize - FIELD_OFFSET(CDELTA_BLOB, Data);
+
+    wprintf_s(L"%s: Base file size          = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, BaseFileSize, BaseFileSize);
+    wprintf_s(L"%s: Delta file size         = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, DeltaFileSize, DeltaFileSize);
+    wprintf_s(L"%s: Delta blob entry type   = 0x%02X (%u)\r\n",
+        __FUNCTIONW__, deltaBlobEntry->Type, deltaBlobEntry->Type);
+    wprintf_s(L"%s: Delta blob size         = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, blobSize, blobSize);
+    wprintf_s(L"%s: Delta payload size      = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, availableSize, availableSize);
+    wprintf_s(L"%s: Declared merged size    = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, blob->Size, blob->Size);
+    wprintf_s(L"%s: Declared checksum       = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, blob->Checksum, blob->Checksum);
+
+    if (blob->Size == 0) {
+        wprintf_s(L"%s: Invalid declared merged size\r\n", __FUNCTIONW__);
+        return ERROR_INVALID_DATA;
+    }
+
+    outputCapacity = BaseFileSize + DeltaFileSize;
+    if (outputCapacity < BaseFileSize || outputCapacity < DeltaFileSize) {
+        wprintf_s(L"%s: Output capacity overflow\r\n", __FUNCTIONW__);
+        return ERROR_ARITHMETIC_OVERFLOW;
+    }
+
+    wprintf_s(L"%s: Output capacity         = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, outputCapacity, outputCapacity);
+
+    outputBuffer = (PBYTE)LocalAlloc(LMEM_ZEROINIT, outputCapacity);
+    if (outputBuffer == NULL) {
+        Result = GetLastError();
+        wprintf_s(L"%s: Failed to allocate output buffer, error %u\r\n", __FUNCTIONW__, Result);
+        return Result;
+    }
+
+    index = 0;
+    databufSize = 0;
+    copyCommandCount = 0;
+    literalCommandCount = 0;
+    zeroLiteralCommandCount = 0;
+    largestCopyCommand = 0;
+    largestLiteralCommand = 0;
+
+    while (index < availableSize) {
+
+        if (availableSize - index < sizeof(WORD)) {
+            wprintf_s(L"%s: Unexpected end of delta blob data at index 0x%08lX (%lu), available 0x%08lX (%lu)\r\n",
+                __FUNCTIONW__, index, index, availableSize, availableSize);
+            Result = ERROR_INVALID_DATA;
+            break;
+        }
+
+        RtlCopyMemory(&sizeX, deltaBlob + index, sizeof(WORD));
+        index += sizeof(WORD);
+
+        if (GET_MSB(sizeX)) {
+
+            copyCommandCount++;
+
+            if (availableSize - index < sizeof(DWORD)) {
+                wprintf_s(L"%s: Unexpected end of delta blob offset at index 0x%08lX (%lu), available 0x%08lX (%lu)\r\n",
+                    __FUNCTIONW__, index, index, availableSize, availableSize);
+                Result = ERROR_INVALID_DATA;
+                break;
+            }
+
+            RtlCopyMemory(&offset, deltaBlob + index, sizeof(DWORD));
+            index += sizeof(DWORD);
+
+            commandSize = (DWORD)((sizeX & DELTA_COPY_LENGTH_MASK) + DELTA_COPY_LENGTH_BIAS);
+            if (commandSize > largestCopyCommand)
+                largestCopyCommand = commandSize;
+
+            if (offset > BaseFileSize || commandSize > BaseFileSize - offset) {
+                wprintf_s(L"%s: Base bounds exceeded: offset 0x%08lX (%lu) + size 0x%08lX (%lu) > base 0x%08lX (%lu)\r\n",
+                    __FUNCTIONW__,
+                    offset, offset,
+                    commandSize, commandSize,
+                    BaseFileSize, BaseFileSize);
+                Result = ERROR_INVALID_DATA;
+                break;
+            }
+
+            if (databufSize > outputCapacity || commandSize > outputCapacity - databufSize) {
+                wprintf_s(L"%s: Output bounds exceeded: current 0x%08lX (%lu) + size 0x%08lX (%lu) > capacity 0x%08lX (%lu)\r\n",
+                    __FUNCTIONW__,
+                    databufSize, databufSize,
+                    commandSize, commandSize,
+                    outputCapacity, outputCapacity);
+                Result = ERROR_INSUFFICIENT_BUFFER;
+                break;
+            }
+
+            RtlCopyMemory(outputBuffer + databufSize, BaseBuffer + offset, commandSize);
+            databufSize += commandSize;
+        }
+        else {
+
+            literalCommandCount++;
+            commandSize = (DWORD)sizeX;
+
+            if (commandSize > largestLiteralCommand)
+                largestLiteralCommand = commandSize;
+
+            if (commandSize == 0) {
+                zeroLiteralCommandCount++;
+                wprintf_s(L"%s: Zero-sized literal command at index 0x%08lX (%lu)\r\n",
+                    __FUNCTIONW__,
+                    (DWORD)(index - (DWORD)sizeof(WORD)),
+                    (DWORD)(index - (DWORD)sizeof(WORD)));
+                continue;
+            }
+
+            if (availableSize - index < commandSize) {
+                wprintf_s(L"%s: Delta bounds exceeded: index 0x%08lX (%lu) + size 0x%08lX (%lu) > payload 0x%08lX (%lu)\r\n",
+                    __FUNCTIONW__,
+                    index, index,
+                    commandSize, commandSize,
+                    availableSize, availableSize);
+                Result = ERROR_INVALID_DATA;
+                break;
+            }
+
+            if (databufSize > outputCapacity || commandSize > outputCapacity - databufSize) {
+                wprintf_s(L"%s: Output bounds exceeded: current 0x%08lX (%lu) + size 0x%08lX (%lu) > capacity 0x%08lX (%lu)\r\n",
+                    __FUNCTIONW__,
+                    databufSize, databufSize,
+                    commandSize, commandSize,
+                    outputCapacity, outputCapacity);
+                Result = ERROR_INSUFFICIENT_BUFFER;
+                break;
+            }
+
+            RtlCopyMemory(outputBuffer + databufSize, deltaBlob + index, commandSize);
+            databufSize += commandSize;
+            index += commandSize;
+        }
+    }
+
+    wprintf_s(L"%s: Copy commands          = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, copyCommandCount, copyCommandCount);
+    wprintf_s(L"%s: Literal commands       = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, literalCommandCount, literalCommandCount);
+    wprintf_s(L"%s: Zero literal commands  = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, zeroLiteralCommandCount, zeroLiteralCommandCount);
+    wprintf_s(L"%s: Largest copy command   = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, largestCopyCommand, largestCopyCommand);
+    wprintf_s(L"%s: Largest literal cmd    = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, largestLiteralCommand, largestLiteralCommand);
+    wprintf_s(L"%s: Final payload index    = 0x%08lX (%lu) of 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, index, index, availableSize, availableSize);
+    wprintf_s(L"%s: Reconstructed size     = 0x%08lX (%lu)\r\n",
+        __FUNCTIONW__, databufSize, databufSize);
+
+    if (Result == ERROR_INTERNAL_ERROR)
+        Result = ERROR_SUCCESS;
+
+    if (Result == ERROR_SUCCESS) {
+        if (databufSize != blob->Size) {
+            wprintf_s(L"%s: Merged output size mismatch: expected 0x%08lX (%lu), got 0x%08lX (%lu)\r\n",
+                __FUNCTIONW__,
+                blob->Size, blob->Size,
+                databufSize, databufSize);
+            Result = ERROR_INVALID_DATA;
+        }
+        else
+        {
+            wprintf_s(L"%s: Merged output size match: expected 0x%08lX (%lu), got 0x%08lX (%lu)\r\n",
+                __FUNCTIONW__,
+                blob->Size, blob->Size,
+                databufSize, databufSize);
+
+            if (VerifyChecksum) {
+                wprintf_s(L"%s: Computing CRC on result buffer\r\n", __FUNCTIONW__);
+
+                DWORD computedChecksum = ComputeDeltaJamCrc32(outputBuffer, databufSize);
+
+                wprintf_s(L"%s: Computed JAMCRC       = 0x%08lX (%lu)\r\n",
+                    __FUNCTIONW__, computedChecksum, computedChecksum);
+                wprintf_s(L"%s: Declared checksum     = 0x%08lX (%lu)\r\n",
+                    __FUNCTIONW__, blob->Checksum, blob->Checksum);
+
+                if (computedChecksum != blob->Checksum) {
+                    wprintf_s(L"%s: Checksum mismatch\r\n", __FUNCTIONW__);
+                    Result = ERROR_INVALID_DATA;
+                }
+            }
+        }
+    }
+
+    if (Result != ERROR_SUCCESS) {
+        LocalFree(outputBuffer);
+        return Result;
+    }
+
+    *MergedBuffer = outputBuffer;
+    *MergedSize = databufSize;
+
+    return ERROR_SUCCESS;
+}
+
+/*
 * MergeDeltaFiles
 *
 * Purpose:
@@ -550,7 +842,8 @@ UINT MergeDeltaFiles(
     _In_ LPCWSTR DeltaFileName,
     _Out_ PULONG TotalBytesWritten,
     _In_ BOOLEAN ExtractImageChunks,
-    _Out_opt_ PULONG ExtractedChunks
+    _Out_opt_ PULONG ExtractedChunks,
+    _In_ BOOLEAN VerifyChecksum
 )
 {
     UINT Result = ERROR_INTERNAL_ERROR;
@@ -662,96 +955,31 @@ UINT MergeDeltaFiles(
                 break;
             }
 
-            DWORD index = 0;
+            PBYTE mergedBuffer = NULL;
+            DWORD mergedSize = 0;
 
-            PCSIG_ENTRY deltaBlobEntry = (PCSIG_ENTRY)GetDeltaBlobSig(DeltaBuffer, DeltaFileSize);
-            if (!deltaBlobEntry) {
-                Result = ERROR_INVALID_DATA;
-                wprintf_s(L"%s: Failed to locate delta blob signature\r\n", __FUNCTIONW__);
+            Result = MergeDeltaBuffer(
+                BaseBuffer,
+                BaseFileSize,
+                DeltaBuffer,
+                DeltaFileSize,
+                VerifyChecksum,
+                &mergedBuffer,
+                &mergedSize);
+
+            if (Result != ERROR_SUCCESS) {
                 break;
             }
 
-            WORD sizeX = 0;
-            DWORD cSize = 0;
-            DWORD blobSize = GET_SIG_SIZE(deltaBlobEntry);
+            OutputBuffer = mergedBuffer;
+            OutputSize = mergedSize;
 
-            PCDELTA_BLOB blob = (PCDELTA_BLOB)deltaBlobEntry->Data;
             wprintf_s(L"\nMerge delta database...");
-            wprintf_s(L"\nMergeSize: %lX - CRC: %lX", blob->Size, blob->Checksum);
+            wprintf_s(L"\nWrote candidate merged buffer of 0x%08lX (%lu) bytes\r\n",
+                OutputSize, OutputSize);
 
-            PBYTE delta_blob = blob->Data;
-
-            OutputBuffer = (PBYTE)LocalAlloc(LMEM_ZEROINIT, BaseFileSize + DeltaFileSize);
-            if (!OutputBuffer) {
-                Result = GetLastError();
-                wprintf_s(L"%s: Failed to allocate output buffer\r\n", __FUNCTIONW__);
-                break;
-            }
-
-            DWORD databufSize = 0;
-
-            do {
-                if (index + sizeof(WORD) > blobSize) {
-                    wprintf_s(L"\nUnexpected end of delta blob data at index %u\r\n", index);
-                    Result = ERROR_INVALID_DATA;
-                    break;
-                }
-
-                sizeX = *(WORD*)(delta_blob + index);
-                index += sizeof(WORD);
-
-                if (GET_MSB(sizeX)) {
-                    if (index + sizeof(DWORD) > blobSize) {
-                        wprintf_s(L"\nUnexpected end of delta blob data at index %u\r\n", index);
-                        Result = ERROR_INVALID_DATA;
-                        break;
-                    }
-
-                    DWORD offset = *(DWORD*)(delta_blob + index);
-                    cSize = (sizeX & 0x7FFF) + 6;
-
-                    if (offset + cSize > BaseFileSize) {
-                        wprintf_s(L"\nBase file bounds exceeded: offset %u + size %u > %u\r\n",
-                            offset, cSize, BaseFileSize);
-                        Result = ERROR_INVALID_DATA;
-                        break;
-                    }
-
-                    //wprintf_s(L"\nAppend 0x%08x bytes from base at offset 0x%08x to the new file", cSize, offset);
-
-                    if (databufSize + cSize > BaseFileSize + DeltaFileSize) {
-                        wprintf_s(L"\nOutput buffer bounds exceeded\r\n");
-                        Result = ERROR_INSUFFICIENT_BUFFER;
-                        break;
-                    }
-
-                    RtlCopyMemory(OutputBuffer + databufSize, BaseBuffer + offset, cSize);
-                    databufSize += cSize;
-                    index += sizeof(DWORD);
-                }
-                else {
-                    if (index + sizeX > blobSize) {
-                        wprintf_s(L"\nDelta blob bounds exceeded: index %u + size %u > %u\r\n",
-                            index, sizeX, blobSize);
-                        Result = ERROR_INVALID_DATA;
-                        break;
-                    }
-
-                    if (databufSize + sizeX > BaseFileSize + DeltaFileSize) {
-                        wprintf_s(L"\nOutput buffer bounds exceeded\r\n");
-                        Result = ERROR_INSUFFICIENT_BUFFER;
-                        break;
-                    }
-
-                    //wprintf_s(L"\nAppend 0x%08x bytes from the current place in delta to the new file", sizeX);
-                    RtlCopyMemory(OutputBuffer + databufSize, delta_blob + index, sizeX);
-                    databufSize += sizeX;
-                    index += sizeX;
-                }
-            } while (index < blobSize - 8);
-
-            totalBytesWritten = FileWrite(OutputBuffer, databufSize, OutputFileHandle);
-            if (totalBytesWritten != databufSize) {
+            totalBytesWritten = FileWrite(OutputBuffer, OutputSize, OutputFileHandle);
+            if (totalBytesWritten != OutputSize) {
                 Result = GetLastError();
                 if (Result == ERROR_SUCCESS) Result = ERROR_WRITE_FAULT;
                 wprintf_s(L"%s: Failed to write merged data\r\n", __FUNCTIONW__);
@@ -759,8 +987,8 @@ UINT MergeDeltaFiles(
             }
 
             *TotalBytesWritten = totalBytesWritten;
-            OutputSize = databufSize;
-            wprintf_s(L"\nWrote %lu bytes to output file\r\n", totalBytesWritten);
+            wprintf_s(L"\nWrote 0x%08lX (%lu) bytes to output file\r\n",
+                totalBytesWritten, totalBytesWritten);
 
             if (ExtractImageChunks && OutputSize > 0) {
                 wprintf_s(L"\n%s: Starting image chunks extraction from merged file\r\n", __FUNCTIONW__);
@@ -920,7 +1148,8 @@ void ExtractDataCommand(
 void MergeDeltaCommand(
     _In_ LPCWSTR BaseFileName,
     _In_ LPCWSTR DeltaFileName,
-    _In_ BOOLEAN ExtractImageChunks)
+    _In_ BOOLEAN ExtractImageChunks,
+    _In_ BOOLEAN VerifyChecksum)
 {
     ULONG TotalBytesWritten = 0, NumberOfImageChunks = 0;
 
@@ -929,7 +1158,8 @@ void MergeDeltaCommand(
         DeltaFileName,
         &TotalBytesWritten,
         ExtractImageChunks,
-        &NumberOfImageChunks);
+        &NumberOfImageChunks,
+        VerifyChecksum);
 
     if (Result == ERROR_SUCCESS) {
         WCHAR szTotalMsg[240];
@@ -972,7 +1202,7 @@ void MergeDeltaCommand(
 int __cdecl main()
 {
     INT nArgs = 0;
-    BOOLEAN fCommand = FALSE, fExtractImageChunks = FALSE, fMergeDelta = FALSE, fExtractContainerOnly = FALSE;
+    BOOLEAN fCommand = FALSE, fExtractImageChunks = FALSE, fMergeDelta = FALSE, fExtractContainerOnly = FALSE, fVerifyMergeChecksum = FALSE;
     LPWSTR DeltaFileName = NULL;
     LPWSTR* szArglist = NULL;
 
@@ -997,6 +1227,9 @@ int __cdecl main()
                     else if (_wcsicmp(szArglist[i], L"-ec") == 0) {
                         fExtractContainerOnly = TRUE;
                     }
+                    else if (_wcsicmp(szArglist[i], L"-mc") == 0) {
+                        fVerifyMergeChecksum = TRUE;
+                    }
                     else if (DeltaFileName == NULL) {
                         DeltaFileName = szArglist[i];
                     }
@@ -1006,9 +1239,12 @@ int __cdecl main()
                 if (fExtractContainerOnly && (fExtractImageChunks || fMergeDelta)) {
                     wprintf_s(L"Error: -ec option is incompatible with -e and -m options\r\n");
                 }
+                else if (fVerifyMergeChecksum && !fMergeDelta) {
+                    wprintf_s(L"Warning: -mc option is only used with -m\r\n");
+                }
                 else if (fMergeDelta) {
                     if (DeltaFileName) {
-                        MergeDeltaCommand(BaseFileName, DeltaFileName, fExtractImageChunks);
+                        MergeDeltaCommand(BaseFileName, DeltaFileName, fExtractImageChunks, fVerifyMergeChecksum);
                         fCommand = TRUE;
                     }
                     else {
@@ -1028,7 +1264,10 @@ int __cdecl main()
     }
 
     if (fCommand != TRUE)
-        wprintf_s(L"Usage: wdextract file [-e]\n       wdextract file [-ec]\n       wdextract baseFile deltaFile -m [-e]\n       wdextract baseFile -m deltaFile [-e]");
+        wprintf_s(L"Usage: wdextract file [-e]\n"
+            L"       wdextract file [-ec]\n"
+            L"       wdextract baseFile deltaFile -m [-e] [-mc]\n"
+            L"       wdextract baseFile -m deltaFile [-e] [-mc]");
     else
         wprintf_s(L"\r\nBye!");
 

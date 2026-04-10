@@ -1,9 +1,9 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>c:\test\mpavbase.extracted c:\test\mpavdlta.extracted -m</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>c:\Test\mpasbase.extracted C:\test\mpasdlta.extracted -m -mc</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
-    <LocalDebuggerCommandArgumentsHistory>c:\test\mpasbase.vdm -e|c:\test\mpavbase.vdm -e|c:\test\mpavdlta.vdm|c:\test\mpasbase.extracted c:\test\mpasdlta.extracted -m|c:\test\mpavbase.extracted c:\test\mpavdlta.extracted -m|</LocalDebuggerCommandArgumentsHistory>
+    <LocalDebuggerCommandArgumentsHistory>c:\Test\mpabase.extracted C:\test\mpavdlta.extracted -m|c:\Test\mpasbase.extracted C:\test\mpavdlta.extracted -m|C:\test\mpasdlta.vdm|c:\Test\mpasbase.extracted C:\test\mpasdlta.extracted -m|c:\Test\mpasbase.extracted C:\test\mpasdlta.extracted -m -mc|</LocalDebuggerCommandArgumentsHistory>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LocalDebuggerCommandArguments>
