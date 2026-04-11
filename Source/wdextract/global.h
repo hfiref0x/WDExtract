@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.13
 *
-*  DATE:        10 Apr 2026
+*  DATE:        11 Apr 2026
 *
 *  Common include header file.
 *
@@ -30,6 +30,8 @@
 #include <intrin.h>
 #include "mpengine.h"
 #include "utils.h"
+#include "extract.h"
+#include "merge.h"
 
 #pragma comment(lib, "Dbghelp.lib")
 #pragma comment(lib, "version.lib")
@@ -39,3 +41,8 @@
 #define SIGNATURE_TYPE_DELTA_BLOB_RECINFO  0x74
 #define DELTA_COPY_LENGTH_MASK             0x7FFF
 #define DELTA_COPY_LENGTH_BIAS             6
+
+#define WDEXTRACT_VERSION           L"wdextract 1.13"
+#define WDEXTRACT_COPYRIGHT         L"(c) 2019 - 2026 hfiref0x"
+#define SUFFIX_RMDX_CCH             6   // L".rmdx" + null
+#define SUFFIX_EXTRACTED_CCH        11  // L".extracted" + null

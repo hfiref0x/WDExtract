@@ -33,12 +33,24 @@
     <ClInclude Include="zconf.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="extract.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="merge.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="wdextract.cpp">
+    <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="utils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="extract.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="merge.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

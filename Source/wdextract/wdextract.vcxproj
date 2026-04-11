@@ -177,7 +177,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="extract.h" />
     <ClInclude Include="global.h" />
+    <ClInclude Include="merge.h" />
     <ClInclude Include="mpengine.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="utils.h" />
@@ -185,8 +187,10 @@
     <ClInclude Include="zlib.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="extract.cpp" />
+    <ClCompile Include="merge.cpp" />
     <ClCompile Include="utils.cpp" />
-    <ClCompile Include="wdextract.cpp" />
+    <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Resource.rc" />

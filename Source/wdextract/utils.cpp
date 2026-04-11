@@ -34,6 +34,42 @@ __declspec(thread) static unsigned char ZLib_out[ZLIB_CHUNK];
 #endif
 
 /*
+* ComputeDeltaJamCrc32
+*
+* Purpose:
+*
+* Calculate a checksum for a block of data using JAMCRC.
+*
+*/
+DWORD ComputeDeltaJamCrc32(
+    _In_reads_bytes_(BufferSize) PBYTE Buffer,
+    _In_ DWORD BufferSize
+)
+{
+    DWORD crc, i, j;
+
+    if (Buffer == NULL)
+        return 0;
+
+    crc = 0xFFFFFFFF;
+
+    for (i = 0; i < BufferSize; i++) {
+        crc ^= Buffer[i];
+
+        for (j = 0; j < 8; j++) {
+            if (crc & 1) {
+                crc = (crc >> 1) ^ 0xEDB88320;
+            }
+            else {
+                crc >>= 1;
+            }
+        }
+    }
+
+    return crc;
+}
+
+/*
 * MapContainerFile
 *
 * Purpose:
@@ -608,327 +644,4 @@ PBYTE GetDeltaBlobSig(
     __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
     }
-}
-
-/*
-* ExtractCallback
-*
-* Purpose:
-*
-* Save image chunk to file with original name (either from export directory or file version info).
-*
-*/
-ULONG ExtractCallback(
-    _In_ LPWSTR CurrentDirectory,
-    _In_ PVOID ChunkPtr,
-    _In_ ULONG ChunkLength,
-    _In_ ULONG ChunkId,
-    _In_ BOOLEAN fNIS
-)
-{
-    BOOLEAN FileNameAvailable;
-    ULONG Result = ERROR_SUCCESS;
-    HANDLE FileHandle = INVALID_HANDLE_VALUE;
-    WCHAR szImageName[MAX_PATH + 1];
-    WCHAR ImageChunkFileName[MAX_FILENAME_BUFFER_LENGTH + 1];
-    WCHAR ImageChunkFileName2[MAX_FILENAME_BUFFER_LENGTH + 1];
-
-    LPCWSTR lpDefaultChunkName;
-
-    if (fNIS)
-        lpDefaultChunkName = DEFAULT_CHUNK_NAME_NIS;
-    else
-        lpDefaultChunkName = DEFAULT_CHUNK_NAME;
-
-    RtlSecureZeroMemory(szImageName, sizeof(szImageName));
-    FileNameAvailable = ExtractImageNameFromExport(ChunkPtr, (LPWSTR)&szImageName, MAX_PATH);
-
-    if (FileNameAvailable) {
-
-        RtlSecureZeroMemory(ImageChunkFileName, MAX_FILENAME_BUFFER_LENGTH);
-        StringCchPrintf(ImageChunkFileName, MAX_FILENAME_BUFFER_LENGTH,
-            TEXT("%s\\chunks\\%s_%s%u.dll"), CurrentDirectory, szImageName, lpDefaultChunkName, ChunkId);
-
-        FileHandle = FileCreate(ImageChunkFileName);
-        if (FileHandle != INVALID_HANDLE_VALUE) {
-            if (FileWrite((PBYTE)ChunkPtr, ChunkLength, FileHandle) != ChunkLength) {
-                Result = GetLastError();
-                if (Result == ERROR_SUCCESS) Result = ERROR_WRITE_FAULT;
-            }
-            CloseHandle(FileHandle);
-        }
-        else {
-            return GetLastError();
-        }
-
-    }
-    else {
-
-        DWORD dwSize;
-        DWORD dwHandle;
-        PVOID vinfo = NULL;
-        LPTRANSLATE lpTranslate = NULL;
-        LPWSTR lpOriginalFileName;
-
-        WCHAR szKey[100 + 1];
-
-        if (FAILED(StringCchPrintf(ImageChunkFileName, MAX_FILENAME_BUFFER_LENGTH,
-            TEXT("%s\\chunks\\%s%u.dll"), CurrentDirectory, lpDefaultChunkName, ChunkId)))
-        {
-            return ERROR_INSUFFICIENT_BUFFER;
-        }
-
-        FileHandle = FileCreate(ImageChunkFileName);
-        if (FileHandle != INVALID_HANDLE_VALUE) {
-            if (FileWrite((PBYTE)ChunkPtr, ChunkLength, FileHandle) != ChunkLength) {
-                Result = GetLastError();
-                if (Result == ERROR_SUCCESS) Result = ERROR_WRITE_FAULT;
-            }
-            CloseHandle(FileHandle);
-        }
-        else {
-            return GetLastError();
-        }
-
-        dwSize = GetFileVersionInfoSize(ImageChunkFileName, &dwHandle);
-        if (dwSize) {
-            vinfo = LocalAlloc(LMEM_ZEROINIT, (SIZE_T)dwSize);
-            if (vinfo) {
-                if (GetFileVersionInfo(ImageChunkFileName, 0, dwSize, vinfo)) {
-                    dwSize = 0;
-                    if (VerQueryValue(vinfo,
-                        L"\\VarFileInfo\\Translation",
-                        (LPVOID*)&lpTranslate,
-                        (PUINT)&dwSize) && dwSize > 0)
-                    {
-                        if (SUCCEEDED(StringCchPrintf(szKey, _countof(szKey),
-                            TEXT("\\StringFileInfo\\%04x%04x\\OriginalFileName"),
-                            lpTranslate[0].wLanguage, lpTranslate[0].wCodePage)))
-                        {
-                            if (VerQueryValue(vinfo, szKey, (LPVOID*)&lpOriginalFileName, (PUINT)&dwSize)) {
-
-                                RtlSecureZeroMemory(ImageChunkFileName2, sizeof(ImageChunkFileName2));
-                                if (SUCCEEDED(StringCchPrintf(ImageChunkFileName2, MAX_FILENAME_BUFFER_LENGTH,
-                                    TEXT("%s\\chunks\\%s_%s%u.dll"), CurrentDirectory, lpOriginalFileName,
-                                    lpDefaultChunkName, ChunkId)))
-                                {
-                                    if (!MoveFileEx(ImageChunkFileName, ImageChunkFileName2,
-                                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-                                    {
-                                        Result = GetLastError();
-                                    }
-                                }
-                                else {
-                                    Result = ERROR_INSUFFICIENT_BUFFER;
-                                }
-                            }
-                        }
-                    }
-                }
-                LocalFree(vinfo);
-            }
-            else {
-                Result = GetLastError();
-            }
-        }
-    }
-
-    return Result;
-}
-
-/*
-* ExtractDataXML_BruteForce
-*
-* Purpose:
-*
-* Extract image chunks from XML scheme.
-*
-*/
-UINT ExtractDataXML_BruteForce(
-    _In_ LPWSTR szCurrentDirectory,
-    _In_ PVOID Container,
-    _In_ LPCWSTR OpenElement,
-    _In_ LPCWSTR CloseElement,
-    _Out_ PULONG ExtractedChunks
-)
-{
-    ULONG ctr = 0;
-    SIZE_T tl1, tl2;
-    CDATA_HEADER_NIS* NisDataHeader = (CDATA_HEADER_NIS*)Container;
-    PBYTE pBytes = (PBYTE)&NisDataHeader->Data;
-    LPWSTR pConverted = NULL;
-    INT nLength;
-    PWCHAR CurrentPosition;
-    PWCHAR MaximumPosition;
-    WCHAR* OpenBlob;
-    ULONG ChunkLength;
-    WCHAR* ptr;
-    DWORD cbBinary;
-    BYTE* pbBinary;
-
-    nLength = MultiByteToWideChar(CP_UTF8, 0, (CHAR*)pBytes, -1, NULL, 0);
-    if (nLength) {
-        pConverted = (LPWSTR)LocalAlloc(LMEM_ZEROINIT, (1 + (SIZE_T)nLength) * sizeof(WCHAR));
-        if (pConverted) {
-
-            tl1 = wcslen(OpenElement);
-            tl2 = wcslen(CloseElement);
-
-            MultiByteToWideChar(CP_UTF8, 0, (CHAR*)pBytes, -1, pConverted, nLength);
-
-            CurrentPosition = pConverted;
-            MaximumPosition = (PWCHAR)(pConverted + wcslen(pConverted)) - tl2;
-
-            while (CurrentPosition < MaximumPosition) {
-
-                OpenBlob = wcsstr(CurrentPosition, OpenElement);
-                if (OpenBlob) {
-
-                    OpenBlob += tl1;
-                    if (OpenBlob >= MaximumPosition) {
-                        break;
-                    }
-
-                    ChunkLength = 0;
-                    ptr = OpenBlob;
-                    while (ptr < MaximumPosition && *ptr != L'<') {
-                        ChunkLength++;
-                        ptr++;
-                    }
-
-                    if (ptr < MaximumPosition && ChunkLength > 0) {
-
-                        cbBinary = 0;
-                        CryptStringToBinary(OpenBlob, (DWORD)ChunkLength,
-                            CRYPT_STRING_BASE64, NULL, (DWORD*)&cbBinary, NULL, NULL);
-
-                        if (cbBinary) {
-                            pbBinary = (BYTE*)LocalAlloc(LMEM_ZEROINIT, cbBinary);
-                            if (pbBinary) {
-
-                                if (CryptStringToBinary(OpenBlob, (DWORD)ChunkLength,
-                                    CRYPT_STRING_BASE64, pbBinary, &cbBinary, NULL, NULL))
-                                {
-                                    wprintf_s(L"%s: Found image at position %08IX with size = %lu\r\n", __FUNCTIONW__,
-                                        (ULONG_PTR)OpenBlob,
-                                        ChunkLength);
-
-                                    ULONG extractResult = ExtractCallback(szCurrentDirectory, pbBinary, cbBinary, ctr, TRUE);
-                                    if (extractResult == ERROR_SUCCESS) {
-                                        ++ctr;
-                                    }
-                                    else {
-                                        wprintf_s(L"%s: ExtractCallback failed with error %u\r\n", __FUNCTIONW__, extractResult);
-                                    }
-                                }
-                                LocalFree(pbBinary);
-                            }
-                        }
-                    }
-
-                    CurrentPosition = (OpenBlob + ChunkLength);
-                    continue;
-                }
-
-                CurrentPosition++;
-            }
-
-        }
-    }
-
-    if (pConverted) LocalFree(pConverted);
-    *ExtractedChunks = ctr;
-
-    return ERROR_SUCCESS;
-}
-
-/*
-* ExtractImageChunksFromBuffer
-*
-* Purpose:
-*
-* Extract PE image chunks from memory buffer.
-*
-*/
-UINT ExtractImageChunksFromBuffer(
-    _In_ LPWSTR szCurrentDirectory,
-    _In_ PVOID Buffer,
-    _In_ DWORD BufferSize,
-    _Out_ PULONG ExtractedChunks,
-    _In_opt_ LPCWSTR CallerName
-)
-{
-    UINT Result = ERROR_SUCCESS;
-    ULONG ctr = 0, cError;
-    LPCWSTR FunctionName = CallerName ? CallerName : __FUNCTIONW__;
-
-    *ExtractedChunks = 0;
-
-    if (BufferSize < sizeof(WORD)) {
-        wprintf_s(L"%s: Buffer too small (%lu bytes), skipping extraction\r\n", FunctionName, BufferSize);
-        return ERROR_INVALID_DATA;
-    }
-
-    if (CreateDirectory(L"chunks", NULL) || GetLastError() == ERROR_ALREADY_EXISTS) {
-        if (!SetCurrentDirectory(L"chunks")) {
-            wprintf_s(L"%s: Failed to change directory to chunks folder\r\n", FunctionName);
-            return ERROR_DIRECTORY;
-        }
-    }
-    else {
-        wprintf_s(L"%s: Failed to create chunks directory\r\n", FunctionName);
-        return ERROR_DIRECTORY;
-    }
-
-    if (IsContainerNIS(Buffer)) {
-        wprintf_s(L"%s: Container is NIS\r\n", FunctionName);
-
-        Result = ExtractDataXML_BruteForce(szCurrentDirectory,
-            Buffer,
-            CODEBLOB_OPEN,
-            CODEBLOB_CLOSE,
-            &ctr);
-    }
-    else {
-        ULONG CurrentPosition = 0;
-        ULONG SizeOfImage;
-        PBYTE CurrentPtr;
-
-        while (CurrentPosition <= BufferSize - sizeof(WORD)) {
-            CurrentPtr = (PBYTE)RtlOffsetToPointer(Buffer, CurrentPosition);
-
-            if ((*(PWORD)(CurrentPtr)) == 'ZM') {
-                SizeOfImage = 0;
-
-                if (IsValidImage(CurrentPtr) && GetImageSize(CurrentPtr, &SizeOfImage)) {
-                    if (SizeOfImage == 0 || CurrentPosition + SizeOfImage > BufferSize) {
-                        CurrentPosition += 1;
-                        continue;
-                    }
-
-                    wprintf_s(L"%s: Found image at position %08X with size = %lu\r\n", FunctionName,
-                        CurrentPosition,
-                        SizeOfImage);
-
-                    cError = ExtractCallback(szCurrentDirectory, CurrentPtr, SizeOfImage, ctr, FALSE);
-                    if (cError != ERROR_SUCCESS) {
-                        ShowWin32Error(cError, L"ExtractCallback()");
-                    }
-                    else {
-                        ++ctr;
-                    }
-
-                    CurrentPosition += SizeOfImage;
-                    continue;
-                }
-            }
-
-            CurrentPosition += 1;
-        }
-
-        wprintf_s(L"%s: Extracted %lu image chunks\r\n", FunctionName, ctr);
-    }
-
-    *ExtractedChunks = ctr;
-    return Result;
 }

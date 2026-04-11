@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.13
 *
-*  DATE:        10 Apr 2026
+*  DATE:        11 Apr 2026
 *
 *  Support routines header file.
 *
@@ -105,16 +105,6 @@ PBYTE GetDeltaBlobSig(
     _In_ PBYTE deltaData,
     _In_ DWORD deltaDataSize);
 
-ULONG ExtractCallback(
-    _In_ LPWSTR CurrentDirectory,
-    _In_ PVOID ChunkPtr,
-    _In_ ULONG ChunkLength,
-    _In_ ULONG ChunkId,
-    _In_ BOOLEAN fNIS);
-
-UINT ExtractImageChunksFromBuffer(
-    _In_ LPWSTR szCurrentDirectory,
-    _In_ PVOID Buffer,
-    _In_ DWORD BufferSize,
-    _Out_ PULONG ExtractedChunks,
-    _In_opt_ LPCWSTR CallerName);
+DWORD ComputeDeltaJamCrc32(
+    _In_reads_bytes_(BufferSize) PBYTE Buffer,
+    _In_ DWORD BufferSize);
