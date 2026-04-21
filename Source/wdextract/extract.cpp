@@ -4,9 +4,9 @@
 *
 *  TITLE:       EXTRACT.CPP
 *
-*  VERSION:     1.13
+*  VERSION:     1.14
 *
-*  DATE:        11 Apr 2026
+*  DATE:        21 Apr 2026
 *
 *  Extraction main logic.
 *
@@ -621,12 +621,6 @@ UINT ExtractDataEXE(
 
     ULONG Size = 0, ChunkLength, EntryLength, ContainerSize = 0;
 
-    ULONG ctr = 0;
-    DWORD totalBytesWritten = 0;
-
-    PBYTE ExtractedChunkData = NULL;
-    DWORD ExtractedChunkSize = 0;
-
     PBYTE DataPtr, DecodedBuffer = NULL;
     SIZE_T CurrentPosition, MaximumLength;
     PVOID Data;
@@ -644,6 +638,7 @@ UINT ExtractDataEXE(
     WCHAR szCurrentDirectory[MAX_PATH + 1];
     WCHAR szOriginalDirectory[MAX_PATH + 1];
     WCHAR TempFileName[MAX_PATH * 2];
+    HRESULT hr;
 
     *TotalBytesWritten = 0;
     *TotalBytesRead = 0;
@@ -658,7 +653,10 @@ UINT ExtractDataEXE(
             return GetLastError();
         }
 
-        StringCchCopy(szOriginalDirectory, MAX_PATH, szCurrentDirectory);
+        hr = StringCchCopy(szOriginalDirectory, MAX_PATH, szCurrentDirectory);
+        if (FAILED(hr)) {
+            return HRESULT_CODE(hr);
+        }
 
         Data = GetContainerFromResource(ImageBase, &Size);
         if (!Data) {
@@ -675,10 +673,19 @@ UINT ExtractDataEXE(
         }
 
         RtlSecureZeroMemory(&TempFileName, sizeof(TempFileName));
-        GetTempPath(MAX_PATH, TempFileName);
-        StringCchCat(TempFileName, MAX_PATH, TEXT("mrt_vdm.dll"));
+        if (GetTempPath(MAX_PATH, TempFileName) == 0) {
+            return GetLastError();
+        }
 
-        tempFileHandle = FileCreate(TempFileName);
+        hr = StringCchCat(TempFileName, MAX_PATH, TEXT("mrt_vdm.dll"));
+        if (FAILED(hr)) {
+            return HRESULT_CODE(hr);
+        }
+
+        //
+        // Save special vdm container to disk into %temp% folder.
+        //
+        tempFileHandle = CreateFile(TempFileName, GENERIC_WRITE | GENERIC_READ, 0, NULL, CREATE_ALWAYS, 0, NULL);
         if (tempFileHandle == INVALID_HANDLE_VALUE) {
             return GetLastError();
         }
@@ -689,12 +696,18 @@ UINT ExtractDataEXE(
         }
 
         do {
+            //
+            // Load special vdm container from %temp%.
+            //
             ExtractedModule = LoadLibraryEx(TempFileName, NULL, LOAD_LIBRARY_AS_IMAGE_RESOURCE);
             if (ExtractedModule == NULL) {
                 Result = GetLastError();
                 break;
             }
 
+            //
+            // Query from resources and validate vdm container header.
+            //
             Data = GetContainerFromResource((PVOID)ExtractedModule, &ContainerSize);
             if (Data == NULL) {
                 Result = ERROR_RESOURCE_NAME_NOT_FOUND;
@@ -714,31 +727,43 @@ UINT ExtractDataEXE(
             ContainerHeader = (PRMDX_HEADER)Data;
             DataHeader = (PCDATA_HEADER)RtlOffsetToPointer(ContainerHeader, ContainerHeader->DataOffset);
 
+            //
+            // Prepare base name for extracted and decoded binary.
+            //
             RtlSecureZeroMemory(BaseName, sizeof(BaseName));
-            StringCchCopy(BaseName, MAX_PATH, FileName);
+            hr = StringCchCopy(BaseName, MAX_PATH, FileName);
+            if (FAILED(hr)) {
+                Result = HRESULT_CODE(hr);
+                break;
+            }
 
             Extension = wcsrchr(BaseName, L'.');
             if (Extension) {
                 *Extension = L'\0';
             }
 
-            if (FAILED(StringCchLength(BaseName, MAX_PATH, &FileNameLength))) {
-                Result = GetLastError();
+            hr = StringCchLength(BaseName, MAX_PATH, &FileNameLength);
+            if (FAILED(hr)) {
+                Result = HRESULT_CODE(hr);
                 break;
             }
 
             FileNameLength += SUFFIX_EXTRACTED_CCH;
             NewFileName = (LPWSTR)LocalAlloc(LMEM_ZEROINIT, FileNameLength * sizeof(WCHAR));
             if (NewFileName == NULL) {
-                Result = GetLastError();
+                Result = ERROR_NOT_ENOUGH_MEMORY;
                 break;
             }
 
-            if (FAILED(StringCchPrintf(NewFileName, FileNameLength, TEXT("%s.extracted"), BaseName))) {
+            hr = StringCchPrintf(NewFileName, FileNameLength, TEXT("%s.extracted"), BaseName);
+            if (FAILED(hr)) {
                 Result = ERROR_INSUFFICIENT_BUFFER;
                 break;
             }
 
+            //
+            // Create new extracted binary.
+            //
             tempFileHandle = FileCreate(NewFileName);
             LocalFree(NewFileName);
             NewFileName = NULL;
@@ -748,11 +773,36 @@ UINT ExtractDataEXE(
                 break;
             }
 
+            if (DataHeader->Length < 4) {
+                Result = ERROR_INVALID_DATA;
+                break;
+            }
+
             MaximumLength = ContainerHeader->DataOffset + sizeof(CDATA_HEADER) + DataHeader->Length - 4;
             CurrentPosition = ContainerHeader->DataOffset + sizeof(CDATA_HEADER);
 
             DataPtr = (PBYTE)RtlOffsetToPointer(DataHeader, sizeof(CDATA_HEADER));
 
+            ULONG ctr = 0;
+            DWORD totalBytesWritten = 0;
+
+            PBYTE ExtractedChunkData = NULL;
+            DWORD ExtractedChunkSize = 0;
+            DWORD ExtractedChunkCapacity = 0;
+
+            if (ExtractImageChunks) {
+                ExtractedChunkCapacity = 10 * 1024 * 1024; //initial buffer size
+                ExtractedChunkData = (PBYTE)LocalAlloc(LMEM_ZEROINIT, ExtractedChunkCapacity);
+                if (!ExtractedChunkData) {
+                    Result = ERROR_NOT_ENOUGH_MEMORY;
+                    wprintf_s(L"%s: Failed to allocate memory for chunk buffer\r\n", __FUNCTIONW__);
+                    break;
+                }
+            }
+
+            //
+            // Decode MRT special vdm container as .extracted and collect all chunks into dynamic buffer to save them later.
+            //
             while (CurrentPosition < MaximumLength) {
                 if (CurrentPosition + sizeof(CHUNK_HEAD) > MaximumLength) {
                     break;
@@ -770,6 +820,11 @@ UINT ExtractDataEXE(
                     continue;
                 }
 
+                if (CurrentPosition + sizeof(CHUNK_HEAD) + ChunkLength > MaximumLength) {
+                    Result = ERROR_INVALID_DATA;
+                    break;
+                }
+
                 DecodedBuffer = (PBYTE)LocalAlloc(LMEM_ZEROINIT, ChunkLength);
                 if (DecodedBuffer) {
                     RtlCopyMemory(DecodedBuffer, RtlOffsetToPointer(DataPtr, sizeof(CHUNK_HEAD)), ChunkLength);
@@ -785,28 +840,44 @@ UINT ExtractDataEXE(
                                 CurrentPosition,
                                 ChunkLength);
 
-                            PBYTE newBuffer = (PBYTE)LocalReAlloc(ExtractedChunkData,
-                                ExtractedChunkSize + ChunkLength,
-                                LMEM_ZEROINIT);
-                            if (newBuffer) {
-                                ExtractedChunkData = newBuffer;
-                                RtlCopyMemory(ExtractedChunkData + ExtractedChunkSize, DecodedBuffer, ChunkLength);
-                                ExtractedChunkSize += ChunkLength;
-                                ctr++;
+                            if (ChunkLength > (MAXDWORD - ExtractedChunkSize)) {
+                                Result = ERROR_ARITHMETIC_OVERFLOW;
+                                LocalFree(DecodedBuffer);
+                                DecodedBuffer = NULL;
+                                break;
                             }
-                            else {
-                                wprintf_s(L"%s: Failed to reallocate chunk buffer\r\n", __FUNCTIONW__);
-                                if (ExtractedChunkData) {
-                                    LocalFree(ExtractedChunkData);
-                                    ExtractedChunkData = NULL;
-                                    ExtractedChunkSize = 0;
+
+                            if ((ExtractedChunkCapacity - ExtractedChunkSize) < ChunkLength) {
+                                DWORD NewCapacity = ExtractedChunkCapacity + ChunkLength;
+                                PBYTE newBuffer = (PBYTE)LocalReAlloc(ExtractedChunkData,
+                                    NewCapacity,
+                                    LMEM_MOVEABLE | LMEM_ZEROINIT);
+
+                                if (newBuffer) {
+                                    ExtractedChunkData = newBuffer;
+                                    ExtractedChunkCapacity = NewCapacity;
+                                }
+                                else {
+                                    wprintf_s(L"%s: Failed to reallocate chunk buffer\r\n", __FUNCTIONW__);
+                                    LocalFree(DecodedBuffer);
+                                    DecodedBuffer = NULL;
+                                    Result = ERROR_NOT_ENOUGH_MEMORY;
+                                    break;
                                 }
                             }
+
+                            RtlCopyMemory(ExtractedChunkData + ExtractedChunkSize, DecodedBuffer, ChunkLength);
+                            ExtractedChunkSize += ChunkLength;
+                            ctr++;
                         }
                     }
 
                     LocalFree(DecodedBuffer);
                     DecodedBuffer = NULL;
+                }
+                else {
+                    Result = ERROR_NOT_ENOUGH_MEMORY;
+                    break;
                 }
 
                 EntryLength = sizeof(CHUNK_HEAD) + ChunkLength;
@@ -817,22 +888,32 @@ UINT ExtractDataEXE(
             *TotalBytesWritten = totalBytesWritten;
             *TotalBytesRead = (ULONG)CurrentPosition;
 
-            if (ExtractImageChunks && ExtractedChunkData && ExtractedChunkSize > 0) {
-                ULONG extractedChunks = 0;
-                Result = ExtractImageChunksFromBuffer(szCurrentDirectory,
-                    ExtractedChunkData,
-                    ExtractedChunkSize,
-                    &extractedChunks,
-                    __FUNCTIONW__);
+            //
+            // Process image chunks if requested.
+            //
+            if (ExtractImageChunks) {
+                if (ExtractedChunkData && ExtractedChunkSize > 0) {
+                    ULONG extractedChunks = 0;
+                    Result = ExtractImageChunksFromBuffer(szCurrentDirectory,
+                        ExtractedChunkData,
+                        ExtractedChunkSize,
+                        &extractedChunks,
+                        __FUNCTIONW__);
 
-                if (ExtractedChunks) {
-                    *ExtractedChunks = extractedChunks;
+                    if (ExtractedChunks) {
+                        *ExtractedChunks = extractedChunks;
+                    }
+                }
+                else {
+                    Result = ERROR_SUCCESS;
                 }
 
-                LocalFree(ExtractedChunkData);
-                ExtractedChunkData = NULL;
+                if (ExtractedChunkData) {
+                    LocalFree(ExtractedChunkData);
+                    ExtractedChunkData = NULL;
+                }
             }
-            else if (!ExtractImageChunks) {
+            else {
                 Result = ERROR_SUCCESS;
             }
 

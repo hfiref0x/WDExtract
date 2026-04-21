@@ -4,9 +4,9 @@
 *
 *  TITLE:       GLOBAL.H
 *
-*  VERSION:     1.13
+*  VERSION:     1.14
 *
-*  DATE:        11 Apr 2026
+*  DATE:        21 Apr 2026
 *
 *  Common include header file.
 *
@@ -42,7 +42,7 @@
 #define DELTA_COPY_LENGTH_MASK             0x7FFF
 #define DELTA_COPY_LENGTH_BIAS             6
 
-#define WDEXTRACT_VERSION           L"wdextract 1.13"
+#define WDEXTRACT_VERSION           L"wdextract 1.14"
 #define WDEXTRACT_COPYRIGHT         L"(c) 2019 - 2026 hfiref0x"
 #define SUFFIX_RMDX_CCH             6   // L".rmdx" + null
 #define SUFFIX_EXTRACTED_CCH        11  // L".extracted" + null
